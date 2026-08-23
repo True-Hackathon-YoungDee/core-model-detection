@@ -1,0 +1,27 @@
+[project]
+name = "fall-detection"
+version = "0.1.0"
+description = "MediaPipe pose core for fall detection (single + multi person)"
+readme = "README.md"
+authors = [
+    { name = "parinya-ao", email = "flim.parinya.ao@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "mediapipe>=1.0.1",
+]
+
+[project.scripts]
+fall-detection = "fall_detection:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
