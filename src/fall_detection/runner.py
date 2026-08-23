@@ -14,6 +14,7 @@ full-frame landmarker or the cascade without knowing which it got.
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import threading
 import time
@@ -165,8 +166,33 @@ class PosePipeline:
             self.smoother.reset()
 
 
+def _configure_capture_logging() -> None:
+    """Silence OpenCV's native logger unless the root logger is at DEBUG.
+
+    Mirrors ``logging_config.suppress_native_stderr``'s DEBUG gate: normally
+    OpenCV's C++ layer bypasses ``logging`` and spams stderr directly on every
+    dropped/malformed frame from a flaky network source, so keep it silent
+    unless the caller explicitly asked for debug output.
+    """
+    level = (
+        cv2.utils.logging.LOG_LEVEL_DEBUG
+        if logging.getLogger().isEnabledFor(logging.DEBUG)
+        else cv2.utils.logging.LOG_LEVEL_SILENT
+    )
+    cv2.utils.logging.setLogLevel(level)
+
+
 def _open_capture(source: int | str, label: str) -> cv2.VideoCapture:
-    capture = cv2.VideoCapture(source)
+    _configure_capture_logging()
+    if isinstance(source, str) and source.startswith(("rtsp://", "http://", "https://")):
+        os.environ.setdefault(
+            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+            "rtsp_transport;tcp|fflags;nobuffer|max_delay;0",
+        )
+        capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    else:
+        capture = cv2.VideoCapture(source)
+    capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     if not capture.isOpened():
         capture.release()
         raise RuntimeError(f"cannot open {label} source: {source!r}")

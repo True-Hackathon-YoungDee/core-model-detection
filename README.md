@@ -9,7 +9,9 @@ a **cascade** that finds person boxes first and landmarks each body separately.
 The cascade exists because the plain path loses people — see
 [Choosing a strategy](#choosing-a-strategy).
 
-Fall heuristics are **not** here yet; this is the keypoint layer they will sit on.
+Fall heuristics already sit on top of this keypoint layer: physics-informed
+discriminators (energy, kinematics, stability) feed a deterministic FSM,
+wired into the CLI via `--fall-*` flags below.
 
 ## Install
 
@@ -50,7 +52,7 @@ into `models/` (gitignored).
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--source` | `0` | camera index, `/dev/video*`, or a video file path |
+| `--source` | `0` | camera index, `/dev/video*`, a video file path, or a stream URL (`rtsp://...`, or DroidCam/IP Webcam `http://<phone-ip>:4747/mjpegfeed`) |
 | `--model` | `full` | `lite` / `full` / `heavy` bundle |
 | `--model-path` | – | use a local `.task` file instead of downloading |
 | `--num-poses` | `1` | maximum people tracked |
@@ -69,8 +71,20 @@ into `models/` (gitignored).
 | `--min-box-px` | `48` | ignore person boxes smaller than this |
 | `--log-level` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `--log-file` | – | mirror logs to a file |
+| `--no-fall-detection` | off | pose-only, skip the fall-state layer |
+| `--body-mass-kg` | `70.0` | subject mass for kinetic-energy discriminators |
+| `--fall-alert-log` | – | append FALL_CONFIRMED/BED_REST transitions as JSON lines to this file |
 
 Exit codes: `0` success, `1` runtime failure, `2` bad arguments.
+
+Network sources (`rtsp://`, `http://`) get low-latency FFmpeg flags by default
+(`rtsp_transport;tcp|fflags;nobuffer|max_delay;0`) and `CAP_PROP_BUFFERSIZE=1`,
+so a stalled phone stream drops old frames instead of piling up lag. OpenCV's
+native logger stays silent unless `--log-level DEBUG`, which also turns it
+verbose for diagnosing handshake stalls. Override the FFmpeg options (e.g. to
+try `udp` transport, or add a `stimeout` for a flaky Wi-Fi link) by setting
+`OPENCV_FFMPEG_CAPTURE_OPTIONS` yourself before running — the default only
+applies via `setdefault`, so it never overrides an explicit value.
 
 ## Choosing a strategy
 

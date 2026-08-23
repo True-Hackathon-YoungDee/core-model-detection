@@ -23,7 +23,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source",
         default="0",
-        help="camera index (e.g. 0), /dev/video* device, or path to a video file",
+        help=(
+            "camera index (e.g. 0), /dev/video* device, path to a video file, "
+            "or a stream URL (e.g. rtsp://..., or DroidCam/IP Webcam "
+            "http://<phone-ip>:4747/mjpegfeed)"
+        ),
     )
     parser.add_argument(
         "--model",
@@ -143,10 +147,12 @@ def format_alert(event) -> str:
 
 
 def _parse_source(raw: str) -> tuple[int | str, bool]:
-    """Return (source, is_live). Digits and /dev/video* mean a live camera."""
+    """Return (source, is_live). Digits, /dev/video*, and stream URLs mean a live camera."""
     if raw.isdigit():
         return int(raw), True
     if raw.startswith("/dev/video"):
+        return raw, True
+    if raw.startswith(("rtsp://", "http://", "https://")):
         return raw, True
     return raw, False
 

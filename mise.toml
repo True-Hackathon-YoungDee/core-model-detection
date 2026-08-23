@@ -1,3 +1,13 @@
 [tools]
+bun = "latest"
+node = "latest"
 python = "latest"
 uv = "latest"
+
+[tasks.test]
+description = "Run test suite"
+run = "uv run pytest"
+
+[tasks.run]
+description = "Run fall-detection CLI (webcam by default)"
+run = "uv run fall-detection --source 0"
