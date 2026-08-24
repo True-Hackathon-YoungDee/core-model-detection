@@ -171,7 +171,7 @@ class FallConfig:
     dynamic_cue_window_s: float = 0.75
     observed_fall_postural_window_s: float = 1.0
     candidate_timeout_s: float = 2.0
-    recovery_dwell_s: float = 2.0
+    recovery_dwell_s: float = 0.70
     max_observation_gap_s: float = 0.5
     min_temporal_coverage: float = 0.80
     rejection_cooldown_s: float = 0.5
@@ -231,7 +231,7 @@ _PROFILE_DEFAULTS: dict[FallProfile, dict[str, float]] = {
         "dynamic_cue_window_s": 0.75,
         "observed_fall_postural_window_s": 1.0,
         "candidate_timeout_s": 2.0,
-        "recovery_dwell_s": 2.0,
+        "recovery_dwell_s": 0.50,
         "max_observation_gap_s": 0.5,
         "min_temporal_coverage": 0.80,
         "rejection_cooldown_s": 0.5,
@@ -251,7 +251,7 @@ _PROFILE_DEFAULTS: dict[FallProfile, dict[str, float]] = {
         "dynamic_cue_window_s": 0.75,
         "observed_fall_postural_window_s": 1.0,
         "candidate_timeout_s": 2.0,
-        "recovery_dwell_s": 2.0,
+        "recovery_dwell_s": 0.70,
         "max_observation_gap_s": 0.5,
         "min_temporal_coverage": 0.80,
         "rejection_cooldown_s": 0.5,
@@ -271,7 +271,7 @@ _PROFILE_DEFAULTS: dict[FallProfile, dict[str, float]] = {
         "dynamic_cue_window_s": 0.75,
         "observed_fall_postural_window_s": 1.0,
         "candidate_timeout_s": 2.0,
-        "recovery_dwell_s": 2.0,
+        "recovery_dwell_s": 1.00,
         "max_observation_gap_s": 0.5,
         "min_temporal_coverage": 0.80,
         "rejection_cooldown_s": 0.5,

@@ -133,6 +133,7 @@ def test_explicit_fall_profile_overrides_toml_profile(monkeypatch, tmp_path):
             posture_aspect_ratio=1.20,
             posture_evidence_fraction=0.75,
             persistent_prone_dwell_s=3.0,
+            recovery_dwell_s=1.0,
         )
     ]
 

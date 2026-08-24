@@ -1,0 +1,21 @@
+# Replace these illustrative paths/checksums/times with a local Le2i copy.
+# Use the room/camera identity in `camera` and never split one subject across folds.
+schema_version = 1
+dataset = "le2i"
+trace = "../traces/le2i-v1.jsonl"
+trace_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[[clips]]
+id = "le2i-subject01-home01-fall01"
+source = "datasets/le2i/home01/subject01-fall01.avi"
+source_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+subject = "subject01"
+trial = "fall01"
+camera = "home01"
+split = "validation"
+duration_s = 12.0
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 4.0
+recovered = false

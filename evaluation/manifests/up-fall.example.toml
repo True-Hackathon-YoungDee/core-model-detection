@@ -1,0 +1,36 @@
+# Replace the zero checksums, paths, durations, groups, splits, and labels with
+# your licensed UP-Fall copy. Keep every subject in exactly one split.
+schema_version = 1
+dataset = "up-fall"
+trace = "../traces/up-fall-v1.jsonl"
+trace_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[[clips]]
+id = "upfall-subject01-activity11-trial01-camera01"
+source = "datasets/up-fall/subject01/activity11/trial01/camera01.mp4"
+source_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+subject = "subject01"
+trial = "activity11-trial01"
+camera = "camera01"
+split = "train"
+duration_s = 10.0
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 3.0
+recovered = true
+
+[[clips]]
+id = "upfall-subject02-activity11-trial01-camera01"
+source = "datasets/up-fall/subject02/activity11/trial01/camera01.mp4"
+source_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+subject = "subject02"
+trial = "activity11-trial01"
+camera = "camera01"
+split = "test"
+duration_s = 10.0
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 3.0
+recovered = true

@@ -272,11 +272,13 @@ def test_upright_recovery_updates_incident_once_and_emits_recovered_event():
         recovery_events.append(manager.update([_upright(8)], t_seconds, 1000, 1000)[0])
     after = manager.update([_upright(8)], 4.1, 1000, 1000)[0]
 
-    recovered = recovery_events[-1]
+    recovered = next(
+        event for event in recovery_events if event.incident_event == "recovered"
+    )
     assert recovered.incident_event == "recovered"
     assert recovered.state is FallState.UPRIGHT
     assert recovered.incident is not None
-    assert recovered.incident.recovered_at == pytest.approx(4.0)
+    assert recovered.incident.recovered_at == pytest.approx(3.0)
     assert manager.incidents[0] == recovered.incident
     assert [event.incident_event for event in recovery_events].count("recovered") == 1
     assert after.incident_event is None
@@ -295,5 +297,5 @@ def test_later_fall_after_recovery_creates_a_new_incident():
         "fall-000001",
         "fall-000002",
     )
-    assert manager.incidents[0].recovered_at == pytest.approx(4.0)
+    assert manager.incidents[0].recovered_at == pytest.approx(3.0)
     assert manager.incidents[1].recovered_at is None

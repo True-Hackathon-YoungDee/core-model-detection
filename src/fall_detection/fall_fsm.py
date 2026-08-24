@@ -215,6 +215,14 @@ class PersonFallFSM:
                     FallEvidenceLevel.HIGH,
                     t_seconds,
                 )
+            elif self._all_dynamic_cues_seen and self._postural_window_is_covered(
+                t_seconds, self.config.observed_fall_postural_window_s
+            ):
+                self._queue_evaluation(
+                    self._qualified_alert_kind(FallAlertKind.OBSERVED_FALL),
+                    FallEvidenceLevel.MEDIUM,
+                    t_seconds,
+                )
             elif self._candidate_timed_out(t_seconds):
                 self._reject(t_seconds)
         elif self.state is FallState.POST_STABILITY_EVALUATION:
@@ -358,6 +366,13 @@ class PersonFallFSM:
             elapsed_s + _EPSILON >= required_s
             and coverage_fraction + _EPSILON >= self.config.min_temporal_coverage
             and evidence_fraction + _EPSILON >= self.config.posture_evidence_fraction
+        )
+
+    def _postural_window_is_covered(self, t_seconds: float, required_s: float) -> bool:
+        _, coverage_fraction, elapsed_s = self._posture.metrics(t_seconds)
+        return (
+            elapsed_s + _EPSILON >= required_s
+            and coverage_fraction + _EPSILON >= self.config.min_temporal_coverage
         )
 
     def _queue_evaluation(

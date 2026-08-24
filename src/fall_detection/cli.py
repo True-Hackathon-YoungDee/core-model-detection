@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fall = parser.add_argument_group(
         "fall detection",
-        "Physics-informed fall-state layer on top of the pose keypoints.",
+        "Pixel-corrected RGB temporal fall-state layer on top of the pose keypoints.",
     )
     fall.add_argument(
         "--no-fall-detection",

@@ -409,6 +409,41 @@ def test_all_three_dynamic_cues_allow_medium_confirmation_after_observations_are
     assert alert.evidence_level is FallEvidenceLevel.MEDIUM
 
 
+def test_all_three_dynamic_cues_allow_medium_after_continuous_covered_postural_window():
+    fsm = PersonFallFSM(FallConfig())
+    started_at = _start_observed_fall(
+        fsm,
+        all_three_dynamic_cues=True,
+        slumping_posture=False,
+    )
+
+    for index in range(1, 6):
+        evaluation = fsm.step(_features(started_at + index * 0.2))
+    alert = fsm.step(_features(started_at + 1.2))
+
+    assert evaluation.state is FallState.POST_STABILITY_EVALUATION
+    assert evaluation.coverage_fraction == pytest.approx(1.0)
+    assert evaluation.evidence_fraction == pytest.approx(0.0)
+    assert alert.state is FallState.FALL_CONFIRMED
+    assert alert.alert_kind is FallAlertKind.OBSERVED_FALL
+    assert alert.evidence_level is FallEvidenceLevel.MEDIUM
+
+
+def test_two_dynamic_cues_do_not_use_continuous_coverage_medium_fallback():
+    fsm = PersonFallFSM(FallConfig())
+    started_at = _start_observed_fall(fsm, slumping_posture=False)
+
+    for index in range(1, 6):
+        after_window = fsm.step(_features(started_at + index * 0.2))
+    rejected = fsm.step(_features(2.0))
+
+    assert after_window.state is FallState.SLUMPING
+    assert after_window.alert_kind is None
+    assert rejected.previous_state is FallState.SLUMPING
+    assert rejected.state is FallState.UPRIGHT
+    assert rejected.alert_kind is None
+
+
 def test_insufficient_postural_evidence_rejects_at_candidate_timeout():
     fsm = PersonFallFSM(FallConfig())
     _start_observed_fall(fsm, slumping_posture=False)
@@ -595,8 +630,8 @@ def test_failed_evaluation_clears_static_evidence_and_stays_upright_through_cool
     assert cooldown_finished.evidence_elapsed_s == pytest.approx(0.0)
 
 
-def test_terminal_alert_recovers_once_after_two_upright_seconds():
-    fsm = PersonFallFSM(FallConfig())
+def test_terminal_alert_recovers_once_after_configured_upright_dwell():
+    fsm = PersonFallFSM(FallConfig(recovery_dwell_s=2.0))
     alert_t, alert = _confirm_observed_fall(fsm)
     assert alert.state is FallState.FALL_CONFIRMED
 
@@ -621,8 +656,23 @@ def test_terminal_alert_recovers_once_after_two_upright_seconds():
     assert after_recovery.recovered is False
 
 
-def test_later_fall_can_emit_a_new_alert_after_recovery():
+def test_balanced_terminal_alert_recovers_after_clip_calibrated_upright_dwell():
     fsm = PersonFallFSM(FallConfig())
+    alert_t, alert = _confirm_observed_fall(fsm)
+    assert alert.state is FallState.FALL_CONFIRMED
+
+    for offset in (0.1, 0.3, 0.5, 0.7, 0.799):
+        before_recovery = fsm.step(_features(alert_t + offset))
+    recovered = fsm.step(_features(alert_t + 0.8))
+
+    assert before_recovery.state is FallState.FALL_CONFIRMED
+    assert before_recovery.recovered is False
+    assert recovered.state is FallState.UPRIGHT
+    assert recovered.recovered is True
+
+
+def test_later_fall_can_emit_a_new_alert_after_recovery():
+    fsm = PersonFallFSM(FallConfig(recovery_dwell_s=2.0))
     first_alert_t, first_alert = _confirm_observed_fall(fsm)
     fsm.step(_features(first_alert_t + 0.1))
     for offset in (0.6, 1.1, 1.6, 2.1):

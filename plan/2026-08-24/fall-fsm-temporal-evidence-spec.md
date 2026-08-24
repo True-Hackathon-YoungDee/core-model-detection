@@ -47,9 +47,9 @@ class FallEvidenceLevel(StrEnum):
 
 Each confirmation creates one `FallIncident`. An incident remains in the
 manager's incident history when a track disappears or the runtime restarts.
-Two seconds of sustained upright evidence ends the active incident, returns the
-FSM to `UPRIGHT`, and records `recovered_at`; it does not delete the incident.
-A later fall creates a new incident.
+The selected profile's sustained-upright recovery dwell ends the active
+incident, returns the FSM to `UPRIGHT`, and records `recovered_at`; it does not
+delete the incident. A later fall creates a new incident.
 
 ## RGB feature model
 
@@ -108,13 +108,13 @@ The seed profiles are:
 | posture aspect ratio | 0.90 | 1.00 | 1.20 |
 | posture evidence fraction | 0.50 | 0.60 | 0.75 |
 | persistent-prone dwell | 1.5 s | 2.0 s | 3.0 s |
+| recovery dwell | 0.50 s | 0.70 s | 1.00 s |
 
 All profiles use:
 
 - dynamic cue window: 0.75 s;
 - observed-fall postural window: 1.0 s;
 - candidate timeout: 2.0 s;
-- recovery dwell: 2.0 s;
 - maximum observation gap: 0.5 s;
 - minimum temporal coverage: 0.80;
 - rejection cooldown: 0.5 s;
@@ -123,7 +123,10 @@ All profiles use:
 - furniture occupancy fraction: 0.60.
 
 These are transparent seed values for validation, not claims of universal
-clinical optimality.
+clinical optimality. The recovery dwell values are empirical regression
+calibration: 2.0 seconds could not express the labelled recovery in the
+three-second fourth repository clip, while the monotonic 0.50/0.70/1.00-second
+seeds retain progressively stricter closure behavior.
 
 Furniture regions are optional normalized polygons. `BED_REST` is reachable
 only when a configured polygon contains the torso centroid for the required
@@ -142,20 +145,33 @@ Dynamic evidence is temporal rather than a simultaneous Boolean gate:
 3. On the next valid processing step enter `SLUMPING` and accumulate
    duration-weighted postural evidence.
 4. Enter `POST_STABILITY_EVALUATION` after a 1.0-second observed-fall window
-   has at least 80% observation coverage and meets the profile's posture
-   fraction. If all three dynamic cues were latched but observations disappear
-   before postural confirmation, allow a `MEDIUM` observed-fall confirmation
-   at timeout. Otherwise reject at timeout, clear all candidate evidence, and
-   apply the 0.5-second cooldown.
+   has at least 80% observation coverage and meets the profile's strict
+   torso-plus-aspect posture fraction, producing `HIGH` evidence. If that
+   normal path fails but all three distinct dynamic cues were latched and the
+   window still has at least 80% observation coverage, allow a `MEDIUM`
+   observed-fall confirmation. If all three cues were latched but observations
+   instead disappear before postural confirmation, allow the same `MEDIUM`
+   confirmation at timeout. Otherwise reject at timeout, clear all candidate
+   evidence, and apply the 0.5-second cooldown. The fallback applies only to an
+   observed dynamic fall; persistent-prone detection remains strict
+   torso-plus-aspect evidence.
 5. On the next step, create exactly one alert and enter `FALL_CONFIRMED`, or
    `BED_REST` when furniture occupancy qualifies.
 6. Independently, a person with no dynamic transition whose prone posture
    meets the profile fraction and coverage for the persistent-prone dwell goes
    through `SLUMPING` and `POST_STABILITY_EVALUATION`, then emits one
    `PERSISTENT_PRONE` incident.
-7. A terminal alert state stays active until two seconds of sustained upright
-   evidence. Recovery returns the FSM to `UPRIGHT` and updates the existing
-   incident rather than erasing it.
+7. A terminal alert state stays active until the selected profile's sustained
+   upright recovery dwell (0.50/0.70/1.00 seconds). Recovery returns the FSM to
+   `UPRIGHT` and updates the existing incident rather than erasing it.
+
+The continuous-coverage `MEDIUM` fallback and recovery seeds were calibrated
+from committed numerical regression traces, not clip identifiers: clips 1 and
+2 retain normal `HIGH` confirmation, while clips 3 and 4 latch all three
+dynamic cues but reach only 0.266 and 0.0 strict posture fractions. Lowering
+aspect or persistent-posture thresholds would broaden static prone alerts, so
+the dynamic-only fallback is the narrower tradeoff. Balanced replay confirms
+clips 3 and 4 at 2.166 and 2.200 seconds and closes clip 4 at 2.933 seconds.
 
 No fresh, nonterminal track may remain in a candidate state longer than the
 configured timeout plus one transition step. Failed evaluation must not retain

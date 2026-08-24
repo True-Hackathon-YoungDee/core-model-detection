@@ -21,7 +21,7 @@ def test_balanced_profile_has_all_specified_seed_values():
     assert config.dynamic_cue_window_s == 0.75
     assert config.observed_fall_postural_window_s == 1.0
     assert config.candidate_timeout_s == 2.0
-    assert config.recovery_dwell_s == 2.0
+    assert config.recovery_dwell_s == 0.70
     assert config.max_observation_gap_s == 0.5
     assert config.min_temporal_coverage == 0.80
     assert config.rejection_cooldown_s == 0.5
@@ -58,6 +58,22 @@ def test_sensitive_and_precision_profiles_have_their_specified_values(profile, e
         config.posture_evidence_fraction,
         config.persistent_prone_dwell_s,
     ) == expected
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_recovery_dwell_s"),
+    [
+        (FallProfile.SENSITIVE, 0.50),
+        (FallProfile.BALANCED, 0.70),
+        (FallProfile.PRECISION, 1.00),
+    ],
+)
+def test_empirical_recovery_seeds_remain_monotonic_across_profiles(
+    profile, expected_recovery_dwell_s
+):
+    config = load_fall_config(profile=profile)
+
+    assert config.recovery_dwell_s == expected_recovery_dwell_s
 
 
 def test_explicit_profile_takes_precedence_over_toml_profile(tmp_path):

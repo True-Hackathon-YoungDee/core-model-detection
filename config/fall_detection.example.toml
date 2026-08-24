@@ -19,7 +19,7 @@ persistent_prone_dwell_s = 2.0
 dynamic_cue_window_s = 0.75
 observed_fall_postural_window_s = 1.0
 candidate_timeout_s = 2.0
-recovery_dwell_s = 2.0
+recovery_dwell_s = 0.70
 max_observation_gap_s = 0.5
 rejection_cooldown_s = 0.5
 
