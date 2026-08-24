@@ -103,7 +103,7 @@ class IdentityTracker:
             if track_id in seen:
                 continue
             track = self._tracks[track_id]
-            if now - track.last_seen <= self.max_unseen_s + 1e-12:
+            if now - track.last_seen <= self.max_unseen_s:
                 continue
             del self._tracks[track_id]
             logger.info(

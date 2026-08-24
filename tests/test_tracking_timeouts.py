@@ -39,16 +39,29 @@ def test_track_expires_on_first_call_strictly_beyond_elapsed_timeout():
     assert lost_ids == [assigned_id]
 
 
+def test_track_expires_at_smallest_representable_time_beyond_timeout():
+    lost_ids: list[int] = []
+    tracker = IdentityTracker(max_unseen_s=2.5, on_lost=lost_ids.append)
+    assigned_id = tracker.assign([(0.25, 0.25)], now=0.0)[0]
+    just_beyond_timeout = math.nextafter(2.5, math.inf)
+
+    tracker.assign([], now=just_beyond_timeout)
+
+    assert just_beyond_timeout > tracker.max_unseen_s
+    assert tracker.active_ids == []
+    assert lost_ids == [assigned_id]
+
+
 def test_matched_observation_refreshes_last_seen_timestamp():
     tracker = IdentityTracker(max_unseen_s=2.5)
     assigned_id = tracker.assign([(0.25, 0.25)], now=0.0)[0]
     tracker.assign([], now=2.0)
 
-    assert tracker.assign([(0.26, 0.25)], now=2.4) == [assigned_id]
-    tracker.assign([], now=4.9)
+    assert tracker.assign([(0.26, 0.25)], now=2.25) == [assigned_id]
+    tracker.assign([], now=4.75)
     assert tracker.active_ids == [assigned_id]
 
-    tracker.assign([], now=4.900001)
+    tracker.assign([], now=4.750001)
     assert tracker.active_ids == []
 
 
