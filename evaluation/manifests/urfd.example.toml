@@ -1,0 +1,22 @@
+# Replace these illustrative paths/checksums/times with the synchronized URFD
+# RGB clips you are licensed to evaluate. Group every view of a trial together.
+schema_version = 1
+dataset = "urfd"
+trace = "../traces/urfd-v1.jsonl"
+trace_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[[clips]]
+id = "urfd-subject01-fall01-camera0"
+source = "datasets/urfd/falls/fall-01-camera0.avi"
+source_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+subject = "subject01"
+trial = "fall01"
+camera = "camera0"
+split = "test"
+duration_s = 8.0
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 2.5
+match_end_s = 4.5
+recovered = false

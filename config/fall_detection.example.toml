@@ -1,0 +1,33 @@
+# Select one seed profile: sensitive, balanced, or precision.
+profile = "balanced"
+
+[dynamic]
+torso_angle_deg = 45.0
+downward_speed_bh_s = 0.50
+torso_rotation_deg_s = 60.0
+height_collapse_fraction = 0.15
+
+[posture]
+torso_angle_deg = 50.0
+aspect_ratio = 1.00
+evidence_fraction = 0.60
+recovery_torso_angle_deg = 35.0
+furniture_occupancy_fraction = 0.60
+
+[timing]
+persistent_prone_dwell_s = 2.0
+dynamic_cue_window_s = 0.75
+observed_fall_postural_window_s = 1.0
+candidate_timeout_s = 2.0
+recovery_dwell_s = 0.70
+max_observation_gap_s = 0.5
+rejection_cooldown_s = 0.5
+
+[quality]
+min_temporal_coverage = 0.80
+min_torso_visibility = 0.50
+
+# Add optional normalized image-space furniture polygons as needed.
+# [[furniture_rois]]
+# name = "bed"
+# points = [[0.10, 0.25], [0.90, 0.25], [0.90, 0.95], [0.10, 0.95]]

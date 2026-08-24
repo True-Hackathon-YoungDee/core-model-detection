@@ -15,6 +15,7 @@ landmark_index)``, with the same ``forget``/``reset`` lifecycle.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -28,6 +29,9 @@ class LandmarkKinematics:
     position: np.ndarray
     velocity: np.ndarray
     acceleration: np.ndarray
+    available: bool = True
+    observed: bool = True
+    prediction_age_s: float = 0.0
 
 
 def _f_matrix(dt: float) -> np.ndarray:
@@ -57,10 +61,15 @@ class LandmarkKalman:
         x0: np.ndarray,
         process_noise: float = 1.0,
         measurement_noise: float = 0.01,
+        max_prediction_gap_s: float = 0.5,
     ) -> None:
+        if not math.isfinite(max_prediction_gap_s) or max_prediction_gap_s <= 0.0:
+            raise ValueError("max_prediction_gap_s must be positive and finite")
         self.t = t0
+        self.last_observed_t = t0
         self.process_noise = process_noise
         self.measurement_noise = measurement_noise
+        self.max_prediction_gap_s = max_prediction_gap_s
         self.state = np.zeros(9)
         self.state[0:3] = x0
         self.P = np.eye(9)
@@ -80,26 +89,40 @@ class LandmarkKalman:
         self, t: float, measurement: np.ndarray, visibility: float, gate: float = 0.5
     ) -> LandmarkKinematics:
         self.predict(t)
-        if visibility >= gate:
+        observed = visibility >= gate
+        if observed:
             R = self.measurement_noise * np.eye(3)
             residual = np.asarray(measurement, dtype=float) - _H @ self.state
             S = _H @ self.P @ _H.T + R
             K = self.P @ _H.T @ np.linalg.inv(S)
             self.state = self.state + K @ residual
             self.P = (np.eye(9) - K @ _H) @ self.P
+            self.last_observed_t = t
+        prediction_age_s = max(0.0, t - self.last_observed_t)
         return LandmarkKinematics(
             position=self.state[0:3].copy(),
             velocity=self.state[3:6].copy(),
             acceleration=self.state[6:9].copy(),
+            available=observed or prediction_age_s <= self.max_prediction_gap_s,
+            observed=observed,
+            prediction_age_s=prediction_age_s,
         )
 
 
 class LandmarkKalmanStabilizer:
     """Owns one :class:`LandmarkKalman` per ``(person_id, landmark_index)``."""
 
-    def __init__(self, process_noise: float = 1.0, measurement_noise: float = 0.01) -> None:
+    def __init__(
+        self,
+        process_noise: float = 1.0,
+        measurement_noise: float = 0.01,
+        max_prediction_gap_s: float = 0.5,
+    ) -> None:
+        if not math.isfinite(max_prediction_gap_s) or max_prediction_gap_s <= 0.0:
+            raise ValueError("max_prediction_gap_s must be positive and finite")
         self.process_noise = process_noise
         self.measurement_noise = measurement_noise
+        self.max_prediction_gap_s = max_prediction_gap_s
         self._filters: dict[tuple[int, int], LandmarkKalman] = {}
 
     def stabilize(
@@ -116,8 +139,24 @@ class LandmarkKalmanStabilizer:
 
             existing = self._filters.get(key)
             if existing is None:
+                if visibility < 0.5:
+                    results.append(
+                        LandmarkKinematics(
+                            position=np.zeros(3),
+                            velocity=np.zeros(3),
+                            acceleration=np.zeros(3),
+                            available=False,
+                            observed=False,
+                            prediction_age_s=0.0,
+                        )
+                    )
+                    continue
                 self._filters[key] = LandmarkKalman(
-                    t_seconds, position, self.process_noise, self.measurement_noise
+                    t_seconds,
+                    position,
+                    self.process_noise,
+                    self.measurement_noise,
+                    self.max_prediction_gap_s,
                 )
                 results.append(
                     LandmarkKinematics(

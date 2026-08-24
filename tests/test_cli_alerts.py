@@ -1,38 +1,115 @@
 import json
+from dataclasses import replace
 
-from fall_detection.cli import format_alert
-from fall_detection.fall_fsm import FallState
-from fall_detection.fall_state import FallEvent, FallStateManager
+import numpy as np
 
-from synthetic_falls import fall_sequence
+from fall_detection.cli import format_alert, main
+from fall_detection.fall_fsm import FallAlertKind, FallEvidenceLevel, FallState
+from fall_detection.fall_state import FallEvent, FallIncident
 
 
-def test_format_alert_produces_one_json_line_with_expected_fields():
-    event = FallEvent(
-        person_id=3,
-        state=FallState.FALL_CONFIRMED,
-        state_changed=True,
-        t_seconds=12.5,
-        torso_angle_deg=80.0,
-        com_height=0.05,
-        instability_index=0.1,
-        vote_fraction=0.9,
+def _incident_event(event_type):
+    recovered_at = 3.0 if event_type == "recovered" else None
+    incident = FallIncident(
+        incident_id="fall-000001",
+        original_person_id=2,
+        kind=FallAlertKind.PERSISTENT_PRONE,
+        evidence_level=FallEvidenceLevel.MEDIUM,
+        terminal_state=FallState.FALL_CONFIRMED,
+        detected_at=1.0,
+        recovered_at=recovered_at,
     )
-    line = format_alert(event)
+    return FallEvent(
+        person_id=2,
+        state=FallState.UPRIGHT if recovered_at is not None else FallState.FALL_CONFIRMED,
+        state_changed=True,
+        t_seconds=recovered_at or 1.0,
+        incident=incident,
+        incident_event=event_type,
+    )
+
+
+def test_format_alert_wraps_versioned_incident_record():
+    line = format_alert(_incident_event("detected"))
+
     assert line.endswith("\n")
-    payload = json.loads(line)
-    assert payload == {"person_id": 3, "state": "FALL_CONFIRMED", "t_seconds": 12.5}
+    assert json.loads(line) == {
+        "schema_version": 1,
+        "incident_id": "fall-000001",
+        "original_person_id": 2,
+        "event": "detected",
+        "person_id": 2,
+        "terminal_state": "FALL_CONFIRMED",
+        "state": "FALL_CONFIRMED",
+        "t_seconds": 1.0,
+        "kind": "PERSISTENT_PRONE",
+        "evidence_level": "MEDIUM",
+        "detected_at": 1.0,
+        "recovered_at": None,
+    }
 
 
-def test_real_fall_sequence_produces_exactly_one_fall_confirmed_alert_line():
-    manager = FallStateManager()
-    alert_lines = []
-    for t_seconds, person in fall_sequence():
-        for event in manager.update([person], t_seconds):
-            if event.state_changed and event.state in (FallState.FALL_CONFIRMED, FallState.BED_REST):
-                alert_lines.append(format_alert(event))
+def test_cli_writes_every_telemetry_event_and_only_incident_alerts(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "clip.mp4"
+    source.touch()
+    alert_path = tmp_path / "alerts.jsonl"
+    telemetry_path = tmp_path / "telemetry.jsonl"
+    ordinary = FallEvent(
+        person_id=2,
+        state=FallState.UPRIGHT,
+        state_changed=False,
+        t_seconds=0.0,
+    )
+    batches = [
+        [ordinary],
+        [_incident_event("detected")],
+        [replace(ordinary, t_seconds=2.0)],
+        [_incident_event("recovered")],
+    ]
 
-    assert len(alert_lines) == 1
-    payload = json.loads(alert_lines[0])
-    assert payload["state"] == "FALL_CONFIRMED"
-    assert payload["person_id"] == 1
+    class FakeManager:
+        def __init__(self, config):
+            pass
+
+        def update(self, persons, t_seconds, frame_width, frame_height):
+            return batches.pop(0)
+
+        def forget(self, person_id):
+            pass
+
+    class FakeRunner:
+        def __init__(self, config, source, **kwargs):
+            self.on_frame = kwargs["on_frame"]
+
+        def run(self):
+            frame = np.zeros((60, 80, 3), dtype=np.uint8)
+            for index in range(4):
+                self.on_frame([], float(index), frame)
+                if index == 1:
+                    assert alert_path.read_text(encoding="utf-8").count("\n") == 1
+            return 4
+
+    monkeypatch.setattr("fall_detection.fall_state.FallStateManager", FakeManager)
+    monkeypatch.setattr("fall_detection.runner.VideoFileRunner", FakeRunner)
+
+    code = main(
+        [
+            "--source",
+            str(source),
+            "--fall-alert-log",
+            str(alert_path),
+            "--fall-telemetry-log",
+            str(telemetry_path),
+            "--no-display",
+        ]
+    )
+
+    assert code == 0
+    telemetry_lines = [
+        json.loads(line) for line in telemetry_path.read_text().splitlines()
+    ]
+    alert_lines = [json.loads(line) for line in alert_path.read_text().splitlines()]
+    assert len(telemetry_lines) == 4
+    assert [line["event"] for line in alert_lines] == ["detected", "recovered"]

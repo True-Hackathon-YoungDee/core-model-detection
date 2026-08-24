@@ -49,3 +49,20 @@ def test_stabilizer_forget_resets_that_persons_filters():
     stabilizer.forget(person_id=1)
     fresh = stabilizer.stabilize(person_id=1, world_landmarks=moving2, t_seconds=2.0)
     assert fresh[0].velocity[0] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_prediction_only_output_becomes_unavailable_after_configured_gap():
+    stabilizer = LandmarkKalmanStabilizer(max_prediction_gap_s=0.5)
+    visible = [make_world_landmark(x=0.0, y=0.0, z=0.0, visibility=1.0)]
+    invisible = [make_world_landmark(x=0.0, y=0.0, z=0.0, visibility=0.1)]
+
+    observed = stabilizer.stabilize(1, visible, 0.0)
+    predicted = stabilizer.stabilize(1, invisible, 0.4)
+    stale = stabilizer.stabilize(1, invisible, 0.6)
+
+    assert len(observed) == len(predicted) == len(stale) == 1
+    assert observed[0].available and observed[0].observed
+    assert predicted[0].available and not predicted[0].observed
+    assert predicted[0].prediction_age_s == pytest.approx(0.4)
+    assert not stale[0].available and not stale[0].observed
+    assert stale[0].prediction_age_s == pytest.approx(0.6)

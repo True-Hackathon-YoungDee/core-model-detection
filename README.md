@@ -9,9 +9,12 @@ a **cascade** that finds person boxes first and landmarks each body separately.
 The cascade exists because the plain path loses people — see
 [Choosing a strategy](#choosing-a-strategy).
 
-Fall heuristics already sit on top of this keypoint layer: physics-informed
-discriminators (energy, kinematics, stability) feed a deterministic FSM,
-wired into the CLI via `--fall-*` flags below.
+Fall decisions sit on top of this keypoint layer: pixel-corrected RGB geometry
+and duration-weighted evidence feed a deterministic temporal FSM. MediaPipe
+world landmarks remain useful for anatomical display, but their hip-centred
+coordinates are not treated as room motion or floor height. See the
+[fall-detection operating guide](docs/fall-detection.md) for transitions,
+configuration, telemetry, replay evaluation, and limitations.
 
 ## Install
 
@@ -72,8 +75,12 @@ into `models/` (gitignored).
 | `--log-level` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `--log-file` | – | mirror logs to a file |
 | `--no-fall-detection` | off | pose-only, skip the fall-state layer |
-| `--body-mass-kg` | `70.0` | subject mass for kinetic-energy discriminators |
-| `--fall-alert-log` | – | append FALL_CONFIRMED/BED_REST transitions as JSON lines to this file |
+| `--body-mass-kg` | – | deprecated compatibility flag; has no effect on RGB fall decisions |
+| `--fall-config` | – | validated TOML threshold/ROI configuration |
+| `--fall-profile` | `balanced` | `sensitive` / `balanced` / `precision`; overrides the TOML profile |
+| `--fall-alert-log` | – | append schema-v1 detected/recovered incident JSONL |
+| `--fall-telemetry-log` | – | append schema-v1 per-decision feature/evidence telemetry JSONL |
+| `--fall-debug-overlay` | off | show evidence duration/fraction/coverage and observation age |
 
 Exit codes: `0` success, `1` runtime failure, `2` bad arguments.
 
@@ -149,8 +156,41 @@ where the cascade returned 3 or 4. The gap widens as people get closer.
 | `tracking.py` | `IdentityTracker` — stable ids across frames |
 | `smoothing.py` | One-Euro filter for landmark jitter |
 | `drawing.py` | skeleton / bbox / HUD overlay |
+| `fall_config.py` | validated profiles, overrides, and furniture ROI polygons |
+| `fall_evidence.py` | finite pixel geometry and temporal RGB derivatives |
+| `fall_fsm.py` | temporal state transitions and alert evidence levels |
+| `fall_state.py` | per-person extractors plus durable incident history |
+| `fall_telemetry.py` | schema-v1 telemetry and incident JSONL records |
+| `evaluation.py` | manifest validation, four replay strategies, event metrics |
 | `logging_config.py` | `setup_logging`, rate limiting, native-log quieting |
 | `cli.py` | argument parsing and wiring |
+
+## Replay regression
+
+The repository commits numerical feature traces, checksums, and labels—not
+videos or model bundles. Replay the local regression set with:
+
+```bash
+uv run fall-evaluate \
+  --manifest evaluation/manifests/local-falls.toml \
+  --strategy temporal-fsm
+```
+
+To regenerate the trace from a checkout where raw assets live outside an
+isolated worktree:
+
+```bash
+uv run python scripts/extract_fall_traces.py \
+  --manifest evaluation/manifests/local-falls.toml \
+  --output evaluation/traces/local-regression-v2.jsonl \
+  --source-root /path/to/repository-root \
+  --model-path /path/to/pose_landmarker_full.task \
+  --fall-profile balanced
+```
+
+Extraction records the pose-model SHA-256 and a canonical fingerprint of the
+exact fall configuration, including furniture ROIs. Replay must use that same
+configuration; a profile, threshold, or ROI mismatch requires re-extraction.
 
 ## Notes that bite
 

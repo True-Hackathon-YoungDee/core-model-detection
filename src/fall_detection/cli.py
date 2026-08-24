@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import argparse
-import json
+from contextlib import ExitStack
 import logging
 import sys
+import warnings
 from pathlib import Path
+from time import monotonic
 
+from .fall_config import FallProfile, load_fall_config
+from .fall_telemetry import event_record, jsonl_line, telemetry_record, write_jsonl
 from .logging_config import setup_logging
 from .models import DEFAULT_CACHE_DIR, DetectorVariant, ModelVariant
 from .strategy import Strategy
@@ -98,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fall = parser.add_argument_group(
         "fall detection",
-        "Physics-informed fall-state layer on top of the pose keypoints.",
+        "Pixel-corrected RGB temporal fall-state layer on top of the pose keypoints.",
     )
     fall.add_argument(
         "--no-fall-detection",
@@ -108,12 +112,26 @@ def build_parser() -> argparse.ArgumentParser:
     fall.add_argument(
         "--body-mass-kg",
         type=float,
-        default=70.0,
-        help="approximate subject mass, used for kinetic-energy discriminators (default: 70.0)",
+        help="deprecated compatibility option; RGB fall decisions do not use body mass",
+    )
+    fall.add_argument("--fall-config", help="load fall thresholds and ROIs from TOML")
+    fall.add_argument(
+        "--fall-profile",
+        choices=[profile.value for profile in FallProfile],
+        help="override the fall profile selected by TOML",
     )
     fall.add_argument(
         "--fall-alert-log",
-        help="append FALL_CONFIRMED/BED_REST state transitions as JSON lines to this file",
+        help="append detected/recovered fall incidents as JSON lines to this file",
+    )
+    fall.add_argument(
+        "--fall-telemetry-log",
+        help="append per-person fall evidence and state decisions as JSON lines",
+    )
+    fall.add_argument(
+        "--fall-debug-overlay",
+        action="store_true",
+        help="show fall evidence, timing, coverage, and observation age",
     )
 
     parser.add_argument(
@@ -143,17 +161,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def format_alert(event) -> str:
-    """One JSON line for a FALL_CONFIRMED/BED_REST transition (--fall-alert-log)."""
-    return (
-        json.dumps(
-            {
-                "person_id": event.person_id,
-                "state": event.state.name,
-                "t_seconds": event.t_seconds,
-            }
-        )
-        + "\n"
-    )
+    """Compatibility wrapper for one schema-v1 incident JSON line."""
+    if event.incident_event not in ("detected", "recovered"):
+        raise ValueError("alert formatting requires a detected or recovered incident")
+    return jsonl_line(event_record(event, event.incident_event))
 
 
 def _parse_source(raw: str) -> tuple[int | str, bool]:
@@ -170,6 +181,23 @@ def _parse_source(raw: str) -> tuple[int | str, bool]:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     setup_logging(args.log_level, args.log_file)
+
+    if args.body_mass_kg is not None:
+        warnings.warn(
+            "--body-mass-kg is deprecated and has no effect on RGB fall decisions",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    try:
+        fall_config = load_fall_config(
+            Path(args.fall_config) if args.fall_config else None,
+            args.fall_profile,
+        )
+    except (OSError, ValueError) as error:
+        location = f" {args.fall_config}" if args.fall_config else ""
+        logger.error("invalid fall configuration%s: %s", location, error)
+        return 2
 
     # Imported after logging is configured so the native log level takes effect.
     from .drawing import annotate_fall_state
@@ -235,44 +263,86 @@ def main(argv: list[str] | None = None) -> int:
         smoothing=not args.no_smoothing,
         best_only=args.best_only,
         max_frames=args.max_frames,
+        max_unseen_s=fall_config.identity_timeout_s,
     )
 
-    if not args.no_fall_detection:
-        fall_manager = FallStateManager(body_mass_kg=args.body_mass_kg)
-        alert_log_path = Path(args.fall_alert_log) if args.fall_alert_log else None
-        latest_events: list = []
-
-        def on_frame(persons, t_seconds, frame) -> None:
-            frame_height, frame_width = frame.shape[:2]
-            events = fall_manager.update(
-                persons, t_seconds, frame_width=frame_width, frame_height=frame_height
-            )
-            latest_events[:] = events
-            for event in events:
-                if not event.state_changed:
-                    continue
-                if event.state == FallState.FALL_CONFIRMED:
-                    logger.error(
-                        "FALL_CONFIRMED person=%d t=%.2fs", event.person_id, event.t_seconds
-                    )
-                elif event.state == FallState.BED_REST:
-                    logger.warning(
-                        "BED_REST person=%d t=%.2fs", event.person_id, event.t_seconds
-                    )
-                else:
-                    continue
-                if alert_log_path is not None:
-                    with alert_log_path.open("a") as handle:
-                        handle.write(format_alert(event))
-
-        def overlay(canvas, persons):
-            return annotate_fall_state(canvas, latest_events)
-
-        runner_kwargs.update(
-            on_frame=on_frame, overlay=overlay, on_person_lost=fall_manager.forget
-        )
-
+    resources = ExitStack()
     try:
+        if not args.no_fall_detection:
+            alert_log = (
+                resources.enter_context(
+                    Path(args.fall_alert_log).open("a", encoding="utf-8")
+                )
+                if args.fall_alert_log
+                else None
+            )
+            telemetry_log = (
+                resources.enter_context(
+                    Path(args.fall_telemetry_log).open("a", encoding="utf-8")
+                )
+                if args.fall_telemetry_log
+                else None
+            )
+            fall_manager = FallStateManager(fall_config)
+            latest_events: list = []
+            last_live_inference_at: float | None = None
+
+            def on_frame(persons, t_seconds, frame) -> None:
+                nonlocal last_live_inference_at
+                if is_live:
+                    last_live_inference_at = monotonic()
+                frame_height, frame_width = frame.shape[:2]
+                events = fall_manager.update(
+                    persons, t_seconds, frame_width=frame_width, frame_height=frame_height
+                )
+                latest_events[:] = events
+                for event in events:
+                    if telemetry_log is not None:
+                        write_jsonl(telemetry_log, telemetry_record(event))
+                    if event.incident_event == "detected":
+                        log = (
+                            logger.warning
+                            if event.state == FallState.BED_REST
+                            else logger.error
+                        )
+                        log(
+                            "%s person=%d t=%.2fs",
+                            event.state.name,
+                            event.person_id,
+                            event.t_seconds,
+                        )
+                    elif event.incident_event == "recovered":
+                        logger.info(
+                            "RECOVERED person=%d t=%.2fs",
+                            event.person_id,
+                            event.t_seconds,
+                        )
+                    else:
+                        continue
+                    if alert_log is not None:
+                        write_jsonl(
+                            alert_log,
+                            event_record(event, event.incident_event),
+                            flush=True,
+                        )
+
+            def overlay(canvas, persons):
+                additional_age_s = (
+                    max(0.0, monotonic() - last_live_inference_at)
+                    if is_live and last_live_inference_at is not None
+                    else 0.0
+                )
+                return annotate_fall_state(
+                    canvas,
+                    latest_events,
+                    debug=args.fall_debug_overlay,
+                    additional_observation_age_s=additional_age_s,
+                )
+
+            runner_kwargs.update(
+                on_frame=on_frame, overlay=overlay, on_person_lost=fall_manager.forget
+            )
+
         if is_live:
             runner = LiveStreamRunner(config, source, **runner_kwargs)
         else:
@@ -284,10 +354,15 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as error:
         logger.error("%s", error)
         return 2
+    except OSError as error:
+        logger.error("fall runtime I/O failed: %s", error)
+        return 2
     except Exception as error:
         logger.error("pose run failed: %s", error)
         logger.debug("pose run failure detail", exc_info=True)
         return 1
+    finally:
+        resources.close()
 
     logger.info("done: %d frames processed", frames)
     return 0

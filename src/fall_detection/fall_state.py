@@ -1,212 +1,267 @@
-"""Per-person orchestrator: PersonPose -> EKF stabilization -> physics ->
-discriminators -> FSM, one call per frame, keyed by person_id like
-:class:`fall_detection.runner.PosePipeline`.
-"""
+"""RGB-only per-person fall tracking and durable event boundaries."""
 
 from __future__ import annotations
 
-from collections import deque
+import warnings
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Literal
 
-import numpy as np
-
-from .biomechanics import (
-    BASE_OF_SUPPORT_LANDMARKS,
-    FloorEstimator,
-    center_of_mass,
-    postural_instability_index,
-    torso_angle_from_vertical,
+from .fall_config import FallConfig
+from .fall_evidence import FallEvidence, FallFeatures, ImageEvidenceExtractor
+from .fall_fsm import (
+    FallAlertKind,
+    FallDecision,
+    FallEvidenceLevel,
+    FallState,
+    PersonFallFSM,
 )
-from .discriminators import (
-    bed_rest,
-    directional_correlation,
-    energy_dissipation_rate,
-    ground_bound,
-    kinetic_energy_ratio,
-    sliding_vertical_displacement,
-)
-from .fall_fsm import DiscriminatorFlags, FallFeatures, FallState, FallThresholds, PersonFallFSM
-from .kalman import LandmarkKalmanStabilizer
-from .pose import PersonPose, PoseLandmark
+from .pose import PersonPose
 
-# Wrists/ankles aren't individual segments in the project's 4-segment De Leva
-# table (see biomechanics.py); this is a rough per-point extremity mass used
-# only for the kinetic-energy-ratio discriminator, not the CoM calculation.
-_LIMB_POINT_MASS_FRACTION = 0.02
-_TRUNK_MASS_FRACTION = 0.6211  # matches DE_LEVA_SEGMENTS[0] ("trunk")
+
+@dataclass(frozen=True)
+class FallIncident:
+    """Durable semantic record created by one terminal fall decision."""
+
+    incident_id: str
+    original_person_id: int
+    kind: FallAlertKind
+    evidence_level: FallEvidenceLevel
+    terminal_state: FallState
+    detected_at: float
+    recovered_at: float | None = None
 
 
 @dataclass(frozen=True)
 class FallEvent:
+    """One observed or gap-driven FSM decision for a tracked person."""
+
     person_id: int
     state: FallState
     state_changed: bool
     t_seconds: float
-    torso_angle_deg: float
-    com_height: float
-    instability_index: float | None
-    vote_fraction: float
+    decision: FallDecision | None = None
+    features: FallFeatures | None = None
+    evidence: FallEvidence | None = None
+    evidence_fraction: float = 0.0
+    coverage_fraction: float = 0.0
+    evidence_elapsed_s: float = 0.0
+    evidence_required_s: float = 0.0
+    observation_age_s: float = 0.0
+    alert_kind: FallAlertKind | None = None
+    evidence_level: FallEvidenceLevel | None = None
+    incident: FallIncident | None = None
+    incident_event: Literal["detected", "recovered"] | None = None
+    # Additive legacy diagnostics retained until Task 5 rewrites consumers.
+    torso_angle_deg: float = 0.0
+    com_height: float | None = None
+    instability_index: float | None = None
+    vote_fraction: float = 0.0
 
 
-@dataclass
-class _StabilizedPoint:
-    x: float
-    y: float
-    z: float
-
-
-def _derivative(history: Sequence[tuple[float, np.ndarray]]) -> np.ndarray:
-    if len(history) < 2:
-        dims = len(history[-1][1]) if history else 3
-        return np.zeros(dims)
-    (t0, v0), (t1, v1) = history[-2], history[-1]
-    dt = t1 - t0
-    if dt <= 0:
-        return np.zeros_like(v1)
-    return (v1 - v0) / dt
-
-
-class PersonFallTracker:
-    """Owns the physics state for a single tracked person."""
-
-    def __init__(
-        self, person_id: int, thresholds: FallThresholds | None = None, body_mass_kg: float = 70.0
-    ) -> None:
+class _PersonFallTracker:
+    def __init__(self, person_id: int, config: FallConfig) -> None:
         self.person_id = person_id
-        self.thresholds = thresholds or FallThresholds()
-        self.body_mass_kg = body_mass_kg
-        self._kalman = LandmarkKalmanStabilizer()
-        self._floor = FloorEstimator()
-        self._fsm = PersonFallFSM(thresholds=self.thresholds)
-        history_len = 300
-        self._com_history: deque[tuple[float, np.ndarray]] = deque(maxlen=history_len)
-        self._height_history: deque[tuple[float, float]] = deque(maxlen=history_len)
-        self._velocity_history: deque[tuple[float, np.ndarray]] = deque(maxlen=history_len)
+        self.extractor = ImageEvidenceExtractor(config)
+        self.fsm = PersonFallFSM(config)
+        self.last_observed_at: float | None = None
 
     def update(
         self,
         person: PersonPose,
         t_seconds: float,
-        frame_width: int | None = None,
-        frame_height: int | None = None,
-    ) -> FallEvent:
-        kinematics = self._kalman.stabilize(self.person_id, person.world_landmarks, t_seconds)
-        stabilized = [_StabilizedPoint(x=k.position[0], y=k.position[1], z=k.position[2]) for k in kinematics]
-
-        com = center_of_mass(stabilized)
-        if com is None:
-            com = np.zeros(3)
-        torso_angle = torso_angle_from_vertical(stabilized)
-        torso_angle = torso_angle if torso_angle is not None else 0.0
-
-        ankle_y = (stabilized[PoseLandmark.LEFT_ANKLE].y + stabilized[PoseLandmark.RIGHT_ANKLE].y) / 2.0
-        self._floor.update(ankle_world_y=ankle_y, torso_angle_deg=torso_angle)
-        com_height = self._floor.height_above_floor(com[1])
-
-        self._com_history.append((t_seconds, com))
-        com_velocity = _derivative(self._com_history)
-        self._velocity_history.append((t_seconds, com_velocity))
-        com_acceleration = _derivative(self._velocity_history)
-
-        self._height_history.append((t_seconds, com_height))
-
-        psi = postural_instability_index(
-            np.array([com[0], com[2]]), stabilized, BASE_OF_SUPPORT_LANDMARKS
+        frame_width: int,
+        frame_height: int,
+    ) -> tuple[FallFeatures, FallDecision]:
+        features = self.extractor.update(
+            person,
+            t_seconds,
+            frame_width,
+            frame_height,
         )
+        self.last_observed_at = t_seconds
+        return features, self.fsm.step(features)
 
-        if frame_width and frame_height:
-            x1, y1, x2, y2 = person.bbox_in_pixels(frame_width, frame_height)
-        else:
-            x1, y1, x2, y2 = person.bbox
-        aspect_ratio = (x2 - x1) / max(y2 - y1, 1e-6)
-
-        vertical_displacement = sliding_vertical_displacement(
-            list(self._height_history), self.thresholds.slump_window_s
-        )
-        dissipation = energy_dissipation_rate(list(self._velocity_history), self.body_mass_kg)
-        is_ground_bound = ground_bound(
-            list(self._height_history), self.thresholds.ground_bound_window_s, self.thresholds.ground_bound_height
-        )
-
-        left_wrist, right_wrist = kinematics[PoseLandmark.LEFT_WRIST], kinematics[PoseLandmark.RIGHT_WRIST]
-        wrist = (
-            left_wrist
-            if np.linalg.norm(left_wrist.velocity) >= np.linalg.norm(right_wrist.velocity)
-            else right_wrist
-        )
-        left_hip, right_hip = kinematics[PoseLandmark.LEFT_HIP], kinematics[PoseLandmark.RIGHT_HIP]
-        hip_velocity = (left_hip.velocity + right_hip.velocity) / 2.0
-        gamma = directional_correlation(wrist.velocity, hip_velocity)
-
-        left_ankle, right_ankle = kinematics[PoseLandmark.LEFT_ANKLE], kinematics[PoseLandmark.RIGHT_ANKLE]
-        zeta = kinetic_energy_ratio(
-            limb_velocities=[left_wrist.velocity, right_wrist.velocity, left_ankle.velocity, right_ankle.velocity],
-            limb_masses_kg=[self.body_mass_kg * _LIMB_POINT_MASS_FRACTION] * 4,
-            trunk_velocity=com_velocity,
-            trunk_mass_kg=self.body_mass_kg * _TRUNK_MASS_FRACTION,
-        )
-
-        features = FallFeatures(
-            t_seconds=t_seconds,
-            com=com,
-            com_velocity=com_velocity,
-            com_acceleration=com_acceleration,
-            com_height=com_height,
-            torso_angle_deg=torso_angle,
-            bbox_aspect_ratio=aspect_ratio,
-            instability_index=psi,
-        )
-        discriminators = DiscriminatorFlags(
-            kinetic_energy_ratio=zeta,
-            directional_correlation=gamma,
-            vertical_displacement_2s=vertical_displacement,
-            energy_dissipation_w=dissipation,
-            ground_bound=is_ground_bound,
-            bed_rest=bed_rest(None, com_height, None),
-        )
-
-        previous_state = self._fsm.state
-        new_state = self._fsm.step(features, discriminators)
-
-        return FallEvent(
-            person_id=self.person_id,
-            state=new_state,
-            state_changed=new_state != previous_state,
-            t_seconds=t_seconds,
-            torso_angle_deg=torso_angle,
-            com_height=com_height,
-            instability_index=psi,
-            vote_fraction=self._fsm.vote_fraction,
-        )
+    def observe_gap(self, t_seconds: float) -> FallDecision:
+        return self.fsm.observe_gap(t_seconds)
 
 
 class FallStateManager:
-    """One call per frame, keyed by person_id -- same shape as PosePipeline."""
+    """Own RGB extractors and temporal FSMs keyed by stable person id."""
 
-    def __init__(self, thresholds: FallThresholds | None = None, body_mass_kg: float = 70.0) -> None:
-        self.thresholds = thresholds or FallThresholds()
-        self.body_mass_kg = body_mass_kg
-        self._trackers: dict[int, PersonFallTracker] = {}
+    def __init__(
+        self,
+        config: FallConfig | None = None,
+        body_mass_kg: float | None = None,
+    ) -> None:
+        self.config = config or FallConfig()
+        if body_mass_kg is not None:
+            warnings.warn(
+                "body_mass_kg is deprecated and has no effect on RGB fall decisions",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        self._trackers: dict[int, _PersonFallTracker] = {}
+        self._incidents: list[FallIncident] = []
+        self._active_incidents: dict[int, FallIncident] = {}
+        self._next_incident_sequence = 1
+
+    @property
+    def incidents(self) -> tuple[FallIncident, ...]:
+        return tuple(self._incidents)
 
     def update(
         self,
         persons: list[PersonPose],
         t_seconds: float,
-        frame_width: int | None = None,
-        frame_height: int | None = None,
+        frame_width: int,
+        frame_height: int,
     ) -> list[FallEvent]:
-        events = []
+        _validate_dimensions(frame_width, frame_height)
+        events: list[FallEvent] = []
+        observed_ids: set[int] = set()
         for person in persons:
-            tracker = self._trackers.get(person.person_id)
+            person_id = person.person_id
+            observed_ids.add(person_id)
+            tracker = self._trackers.get(person_id)
             if tracker is None:
-                tracker = PersonFallTracker(person.person_id, self.thresholds, self.body_mass_kg)
-                self._trackers[person.person_id] = tracker
-            events.append(tracker.update(person, t_seconds, frame_width, frame_height))
+                tracker = _PersonFallTracker(person_id, self.config)
+                self._trackers[person_id] = tracker
+            features, decision = tracker.update(
+                person,
+                t_seconds,
+                frame_width,
+                frame_height,
+            )
+            events.append(
+                self._event(
+                    person_id,
+                    t_seconds,
+                    decision,
+                    features=features,
+                    observation_age_s=0.0,
+                )
+            )
+
+        for person_id in sorted(set(self._trackers) - observed_ids):
+            tracker = self._trackers[person_id]
+            decision = tracker.observe_gap(t_seconds)
+            observation_age_s = (
+                max(0.0, t_seconds - tracker.last_observed_at)
+                if tracker.last_observed_at is not None
+                else 0.0
+            )
+            events.append(
+                self._event(
+                    person_id,
+                    t_seconds,
+                    decision,
+                    features=None,
+                    observation_age_s=observation_age_s,
+                )
+            )
         return events
 
     def forget(self, person_id: int) -> None:
         self._trackers.pop(person_id, None)
+        self._active_incidents.pop(person_id, None)
 
-    def reset(self) -> None:
+    def reset(self, preserve_incidents: bool = True) -> None:
         self._trackers.clear()
+        self._active_incidents.clear()
+        if not preserve_incidents:
+            self.clear_incidents()
+
+    def clear_incidents(self) -> None:
+        self._incidents.clear()
+        self._active_incidents.clear()
+
+    def _event(
+        self,
+        person_id: int,
+        t_seconds: float,
+        decision: FallDecision,
+        *,
+        features: FallFeatures | None,
+        observation_age_s: float,
+    ) -> FallEvent:
+        incident, incident_event = self._apply_incident_decision(
+            person_id,
+            t_seconds,
+            decision,
+        )
+        return FallEvent(
+            person_id=person_id,
+            state=decision.state,
+            state_changed=decision.state_changed,
+            t_seconds=t_seconds,
+            decision=decision,
+            features=features,
+            evidence=decision.evidence,
+            evidence_fraction=decision.evidence_fraction,
+            coverage_fraction=decision.coverage_fraction,
+            evidence_elapsed_s=decision.evidence_elapsed_s,
+            evidence_required_s=decision.evidence_required_s,
+            observation_age_s=observation_age_s,
+            alert_kind=decision.alert_kind,
+            evidence_level=decision.evidence_level,
+            incident=incident,
+            incident_event=incident_event,
+            torso_angle_deg=(features.torso_angle_deg if features is not None else 0.0),
+            vote_fraction=decision.evidence_fraction,
+        )
+
+    def _apply_incident_decision(
+        self,
+        person_id: int,
+        t_seconds: float,
+        decision: FallDecision,
+    ) -> tuple[FallIncident | None, Literal["detected", "recovered"] | None]:
+        active = self._active_incidents.get(person_id)
+        if decision.recovered:
+            if active is None:
+                return None, None
+            recovered = FallIncident(
+                incident_id=active.incident_id,
+                original_person_id=active.original_person_id,
+                kind=active.kind,
+                evidence_level=active.evidence_level,
+                terminal_state=active.terminal_state,
+                detected_at=active.detected_at,
+                recovered_at=t_seconds,
+            )
+            incident_index = next(
+                index
+                for index, incident in enumerate(self._incidents)
+                if incident.incident_id == active.incident_id
+            )
+            self._incidents[incident_index] = recovered
+            del self._active_incidents[person_id]
+            return recovered, "recovered"
+
+        if decision.alert_kind is not None and decision.evidence_level is not None:
+            if active is not None:
+                return active, None
+            incident = FallIncident(
+                incident_id=f"fall-{self._next_incident_sequence:06d}",
+                original_person_id=person_id,
+                kind=decision.alert_kind,
+                evidence_level=decision.evidence_level,
+                terminal_state=decision.state,
+                detected_at=t_seconds,
+            )
+            self._next_incident_sequence += 1
+            self._incidents.append(incident)
+            self._active_incidents[person_id] = incident
+            return incident, "detected"
+
+        return active, None
+
+
+def _validate_dimensions(frame_width: object, frame_height: object) -> None:
+    if (
+        type(frame_width) is not int
+        or type(frame_height) is not int
+        or frame_width <= 0
+        or frame_height <= 0
+    ):
+        raise ValueError("frame_width and frame_height must be positive integers")

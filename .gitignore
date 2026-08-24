@@ -17,6 +17,12 @@ wheels/
 models/
 *.task
 
+# Raw labelled/probe videos stay local; commit only manifests and numeric traces.
+/video/input/
+
+# Interrupted extractor writes are disposable; completed JSONL traces are tracked.
+/evaluation/traces/*.tmp
+
 # Created by https://www.toptal.com/developers/gitignore/api/python,jupyternotebooks,cuda,circuitpython,c++,docusaurus,gcov,ocaml,cmake,xmake,justcode
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,jupyternotebooks,cuda,circuitpython,c++,docusaurus,gcov,ocaml,cmake,xmake,justcode
 

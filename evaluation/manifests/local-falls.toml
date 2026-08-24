@@ -1,0 +1,88 @@
+schema_version = 1
+dataset = "local-falls"
+trace = "../traces/local-regression-v2.jsonl"
+trace_sha256 = "d666a6e2906b5e69d8ead0f0c108655cf827060a045223c03746d9878626e331"
+
+[[clips]]
+id = "fall-example-1"
+source = "video/input/fall_example_1.mp4"
+source_sha256 = "e56e913b1f25ac729706f14e5dd10075486502df255f4264848fa55118444554"
+subject = "local-subject-1"
+trial = "fall-trial-1"
+camera = "camera-1"
+split = "regression"
+duration_s = 11.34278565471226
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 4.128
+match_end_s = 6.128
+recovered = false
+
+[[clips]]
+id = "fall-example-2"
+source = "video/input/fall_example_2.mp4"
+source_sha256 = "f5465d2026051e583c7822fd7afe20dc919bd166400ca57204e23a6fb415b15e"
+subject = "local-subject-2"
+trial = "fall-trial-2"
+camera = "camera-1"
+split = "regression"
+duration_s = 4.066666666666666
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 2.166
+match_end_s = 4.066666666666666
+recovered = false
+
+[[clips]]
+id = "fall-example-3"
+source = "video/input/fall_example_3.mp4"
+source_sha256 = "3c3b0a93abe26f70ee2b46664dc06c65da0854c0a070389c051d2b2028cafa66"
+subject = "local-subject-3"
+trial = "fall-trial-3"
+camera = "camera-1"
+split = "regression"
+duration_s = 2.933333333333333
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.866
+match_end_s = 2.866
+recovered = false
+
+[[clips]]
+id = "fall-example-4"
+source = "video/input/fall_example_4.mp4"
+source_sha256 = "1b3d7b18bd56e1ff54b9ad4c6368a7a5bd322b7c44abc6574bcf9167c535f89c"
+subject = "local-subject-4"
+trial = "fall-trial-4"
+camera = "camera-1"
+split = "regression"
+duration_s = 3.0
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.866
+match_end_s = 2.866
+recovered = true
+
+[[clips]]
+id = "no-person-sample-1"
+source = "video/input/sample_1.mp4"
+source_sha256 = "3594ac93e2e91f087cd6f9b30f1b81db6fadd8609f9530542c3a24f4b84409ce"
+subject = "local-negative-1"
+trial = "no-person-trial-1"
+camera = "camera-1"
+split = "regression"
+duration_s = 13.3133
+
+[[clips]]
+id = "no-person-sample-2"
+source = "video/input/sample_2.mp4"
+source_sha256 = "6e1d683330d3cb1861a83a07208609d97abb25c1fec5bf17d134a28c513736aa"
+subject = "local-negative-2"
+trial = "no-person-trial-2"
+camera = "camera-1"
+split = "regression"
+duration_s = 13.859154929577465
