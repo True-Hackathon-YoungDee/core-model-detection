@@ -444,3 +444,5 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python,jupyternotebooks,cuda,circuitpython,c++,docusaurus,gcov,ocaml,cmake,xmake,justcode
 
+repomix*
+*mp4

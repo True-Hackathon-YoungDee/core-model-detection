@@ -85,9 +85,15 @@ class FpsMeter:
 class Display:
     """Optional cv2 window. Disables itself if the host has no GUI."""
 
-    def __init__(self, enabled: bool, window: str = "fall-detection | pose") -> None:
+    def __init__(
+        self,
+        enabled: bool,
+        window: str = "fall-detection | pose",
+        max_width: int = 1280,
+    ) -> None:
         self.enabled = enabled
         self.window = window
+        self.max_width = max_width
         self._opened = False
 
     def show(self, frame) -> bool:
@@ -95,8 +101,16 @@ class Display:
         if not self.enabled:
             return True
         try:
+            if not self._opened:
+                cv2.namedWindow(self.window, cv2.WINDOW_NORMAL)
+                height, width = frame.shape[:2]
+                if width > self.max_width:
+                    scale = self.max_width / width
+                    cv2.resizeWindow(
+                        self.window, self.max_width, int(height * scale)
+                    )
+                self._opened = True
             cv2.imshow(self.window, frame)
-            self._opened = True
             key = cv2.waitKey(1) & 0xFF
         except cv2.error as error:
             logger.error("display unavailable (%s); continuing headless", error)
@@ -211,6 +225,7 @@ class VideoFileRunner:
         config: PoseConfig,
         path: str | Path,
         display: bool = True,
+        display_max_width: int = 1280,
         smoothing: bool = True,
         best_only: bool = False,
         max_frames: int | None = None,
@@ -220,7 +235,7 @@ class VideoFileRunner:
     ) -> None:
         self.config = config
         self.path = str(path)
-        self.display = Display(display)
+        self.display = Display(display, max_width=display_max_width)
         self.pipeline = PosePipeline(
             smoothing=smoothing, best_only=best_only, on_person_lost=on_person_lost
         )
@@ -399,6 +414,7 @@ class LiveStreamRunner:
         config: PoseConfig,
         source: int | str = 0,
         display: bool = True,
+        display_max_width: int = 1280,
         smoothing: bool = True,
         best_only: bool = False,
         max_frames: int | None = None,
@@ -411,7 +427,7 @@ class LiveStreamRunner:
     ) -> None:
         self.config = config
         self.source = source
-        self.display = Display(display)
+        self.display = Display(display, max_width=display_max_width)
         self.pipeline = PosePipeline(
             smoothing=smoothing, best_only=best_only, on_person_lost=on_person_lost
         )

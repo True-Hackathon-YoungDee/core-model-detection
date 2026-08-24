@@ -117,6 +117,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument("--no-display", action="store_true", help="run headless, no cv2 window")
+    parser.add_argument(
+        "--display-max-width",
+        type=int,
+        default=1280,
+        help="cap initial display window width in px, preserves aspect ratio (default: 1280)",
+    )
     parser.add_argument("--no-smoothing", action="store_true", help="disable One-Euro filtering")
     parser.add_argument("--min-detection-confidence", type=float, default=0.5)
     parser.add_argument("--min-presence-confidence", type=float, default=0.5)
@@ -218,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
 
     runner_kwargs = dict(
         display=not args.no_display,
+        display_max_width=args.display_max_width,
         smoothing=not args.no_smoothing,
         best_only=args.best_only,
         max_frames=args.max_frames,
