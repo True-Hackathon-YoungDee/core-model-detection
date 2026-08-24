@@ -35,6 +35,7 @@ _EPSILON = 1e-12
 class LabelledEvent:
     kind: FallAlertKind
     onset_s: float
+    match_end_s: float
     recovered: bool
 
 
@@ -72,6 +73,8 @@ class _TraceObservation:
 class _TraceClip:
     clip_id: str
     source_sha256: str
+    model_sha256: str
+    fall_config_fingerprint: str
     duration_s: float
     frame_width: int
     frame_height: int
@@ -98,6 +101,35 @@ class _Incident:
             "detected_at": self.detected_at,
             "recovered_at": self.recovered_at,
         }
+
+
+def _fall_config_canonical_record(config: FallConfig) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for config_field in dataclasses.fields(config):
+        value = getattr(config, config_field.name)
+        if config_field.name == "profile":
+            value = config.profile.value
+        elif config_field.name == "furniture_rois":
+            value = [
+                {
+                    "name": roi.name,
+                    "points": [[x, y] for x, y in roi.points],
+                }
+                for roi in config.furniture_rois
+            ]
+        values[config_field.name] = value
+    return {"schema_version": 1, "fall_config": values}
+
+
+def fall_config_fingerprint(config: FallConfig) -> str:
+    """Return SHA-256 of the exact canonical schema-v1 FallConfig record."""
+    canonical = json.dumps(
+        _fall_config_canonical_record(config),
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _table(value: object, name: str) -> Mapping[str, Any]:
@@ -244,7 +276,7 @@ def load_manifest(path: str | Path) -> EvaluationManifest:
             event = _table(raw_event, event_name)
             _require_exact_keys(
                 event,
-                required={"kind", "onset_s", "recovered"},
+                required={"kind", "onset_s", "match_end_s", "recovered"},
                 optional=set(),
                 name=event_name,
             )
@@ -257,11 +289,24 @@ def load_manifest(path: str | Path) -> EvaluationManifest:
             onset_s = _finite_number(
                 event["onset_s"], f"{event_name}.onset_s", minimum=0.0
             )
-            if onset_s > duration_s + _EPSILON:
+            if onset_s > duration_s:
                 raise ValueError(f"{event_name}.onset_s exceeds clip duration")
+            match_end_s = _finite_number(
+                event["match_end_s"],
+                f"{event_name}.match_end_s",
+                minimum=0.0,
+            )
+            if match_end_s <= onset_s:
+                raise ValueError(
+                    f"{event_name}.match_end_s must be greater than onset_s"
+                )
+            if match_end_s > duration_s:
+                raise ValueError(f"{event_name}.match_end_s exceeds clip duration")
             if type(event["recovered"]) is not bool:
                 raise ValueError(f"{event_name}.recovered must be a boolean")
-            events.append(LabelledEvent(kind, onset_s, event["recovered"]))
+            events.append(
+                LabelledEvent(kind, onset_s, match_end_s, event["recovered"])
+            )
         if any(
             later.onset_s <= earlier.onset_s
             for earlier, later in itertools.pairwise(events)
@@ -365,6 +410,8 @@ def _read_trace(path: str | Path) -> tuple[_TraceClip, ...]:
 
     headers: dict[str, dict[str, object]] = {}
     observations: dict[str, list[_TraceObservation]] = defaultdict(list)
+    observation_keys: dict[str, set[tuple[int, int | None]]] = defaultdict(set)
+    frame_timestamps: dict[str, dict[int, float]] = defaultdict(dict)
     for line_number, line in enumerate(lines, start=1):
         if not line.strip():
             raise ValueError(f"blank trace record at {trace_path}:{line_number}")
@@ -388,6 +435,8 @@ def _read_trace(path: str | Path) -> tuple[_TraceClip, ...]:
                     "record_type",
                     "clip_id",
                     "source_sha256",
+                    "model_sha256",
+                    "fall_config_fingerprint",
                     "duration_s",
                     "frame_width",
                     "frame_height",
@@ -399,6 +448,23 @@ def _read_trace(path: str | Path) -> tuple[_TraceClip, ...]:
             )
             if clip_id in headers:
                 raise ValueError(f"duplicate trace clip header: {clip_id}")
+            model_sha256 = _sha256(
+                record["model_sha256"], f"{context}.model_sha256"
+            )
+            config_fingerprint = _sha256(
+                record["fall_config_fingerprint"],
+                f"{context}.fall_config_fingerprint",
+            )
+            if headers:
+                first_header = next(iter(headers.values()))
+                if model_sha256 != first_header["model_sha256"]:
+                    raise ValueError(
+                        "trace model provenance must be consistent across clips"
+                    )
+                if config_fingerprint != first_header["fall_config_fingerprint"]:
+                    raise ValueError(
+                        "trace fall config provenance must be consistent across clips"
+                    )
             duration_s = _finite_number(
                 record["duration_s"], f"{context}.duration_s", minimum=0.0
             )
@@ -406,6 +472,8 @@ def _read_trace(path: str | Path) -> tuple[_TraceClip, ...]:
                 raise ValueError(f"{context}.duration_s must be positive")
             headers[clip_id] = {
                 "source_sha256": source_sha256,
+                "model_sha256": model_sha256,
+                "fall_config_fingerprint": config_fingerprint,
                 "duration_s": duration_s,
                 "frame_width": _positive_int(
                     record["frame_width"], f"{context}.frame_width"
@@ -443,9 +511,19 @@ def _read_trace(path: str | Path) -> tuple[_TraceClip, ...]:
             frame_index = record["frame_index"]
             if type(frame_index) is not int or frame_index < 0:
                 raise ValueError(f"{context}.frame_index must be a non-negative integer")
-            t_seconds = _finite_number(
-                record["t_seconds"], f"{context}.t_seconds", minimum=0.0
-            )
+            frame_count = int(headers[clip_id]["frame_count"])
+            if frame_index >= frame_count:
+                raise ValueError(
+                    f"{context}.frame_index={frame_index} is outside "
+                    f"declared frame_count={frame_count}"
+                )
+            t_seconds = _finite_number(record["t_seconds"], f"{context}.t_seconds")
+            duration_s = float(headers[clip_id]["duration_s"])
+            if t_seconds < 0.0 or t_seconds > duration_s:
+                raise ValueError(
+                    f"{context}.t_seconds must be inside clip duration "
+                    f"[0, {duration_s}]"
+                )
             person_id = record["person_id"]
             features_value = record["features"]
             if person_id is None:
@@ -458,6 +536,22 @@ def _read_trace(path: str | Path) -> tuple[_TraceClip, ...]:
                 features = _features_from_record(features_value, context)
                 if abs(features.t_seconds - t_seconds) > _EPSILON:
                     raise ValueError(f"{context} feature timestamp differs from observation")
+            observation_key = (frame_index, person_id)
+            if observation_key in observation_keys[clip_id]:
+                raise ValueError(
+                    f"duplicate observation key in {clip_id}: "
+                    f"frame_index={frame_index}, person_id={person_id}"
+                )
+            observation_keys[clip_id].add(observation_key)
+            existing_frame_timestamp = frame_timestamps[clip_id].get(frame_index)
+            if (
+                existing_frame_timestamp is not None
+                and abs(existing_frame_timestamp - t_seconds) > _EPSILON
+            ):
+                raise ValueError(
+                    f"frame {frame_index} timestamps must be consistent in clip {clip_id}"
+                )
+            frame_timestamps[clip_id][frame_index] = t_seconds
             previous = observations[clip_id][-1] if observations[clip_id] else None
             if previous is not None and t_seconds + _EPSILON < previous.t_seconds:
                 raise ValueError(f"{context} timestamps must be non-decreasing")
@@ -469,15 +563,36 @@ def _read_trace(path: str | Path) -> tuple[_TraceClip, ...]:
 
     clips: list[_TraceClip] = []
     for clip_id, header in headers.items():
+        frame_count = int(header["frame_count"])
+        missing_frame_indices = sorted(
+            set(range(frame_count)) - set(frame_timestamps[clip_id])
+        )
+        if missing_frame_indices:
+            raise ValueError(
+                f"trace clip {clip_id} missing frame indices: "
+                + ", ".join(str(index) for index in missing_frame_indices)
+            )
+        ordered_timestamps = [
+            frame_timestamps[clip_id][index] for index in range(frame_count)
+        ]
+        if any(
+            later + _EPSILON < earlier
+            for earlier, later in itertools.pairwise(ordered_timestamps)
+        ):
+            raise ValueError(
+                f"trace clip {clip_id} frame timestamps must be non-decreasing"
+            )
         clips.append(
             _TraceClip(
                 clip_id=clip_id,
                 source_sha256=str(header["source_sha256"]),
+                model_sha256=str(header["model_sha256"]),
+                fall_config_fingerprint=str(header["fall_config_fingerprint"]),
                 duration_s=float(header["duration_s"]),
                 frame_width=int(header["frame_width"]),
                 frame_height=int(header["frame_height"]),
                 fps=float(header["fps"]),
-                frame_count=int(header["frame_count"]),
+                frame_count=frame_count,
                 observations=tuple(observations[clip_id]),
             )
         )
@@ -636,6 +751,8 @@ def _replay_clip(clip: _TraceClip, strategy: str, config: FallConfig) -> dict[st
     return {
         "clip_id": clip.clip_id,
         "source_sha256": clip.source_sha256,
+        "model_sha256": clip.model_sha256,
+        "fall_config_fingerprint": clip.fall_config_fingerprint,
         "duration_s": clip.duration_s,
         "incidents": [incident.record() for incident in incidents],
         "state_dwell_s": dict(sorted(dwell.items())),
@@ -655,10 +772,19 @@ def replay_trace(
         )
     selected_config = config or FallConfig()
     clips = _read_trace(path)
+    expected_config_fingerprint = fall_config_fingerprint(selected_config)
+    if clips and clips[0].fall_config_fingerprint != expected_config_fingerprint:
+        raise ValueError(
+            "trace fall config fingerprint "
+            f"{clips[0].fall_config_fingerprint} does not match replay config "
+            f"{expected_config_fingerprint}; re-extract the trace with this config"
+        )
     logger.info("replaying %d clips with %s", len(clips), strategy)
     return {
         "schema_version": 1,
         "strategy": strategy,
+        "model_sha256": clips[0].model_sha256 if clips else None,
+        "fall_config_fingerprint": expected_config_fingerprint,
         "clips": [
             _replay_clip(clip, strategy, selected_config) for clip in clips
         ],
@@ -733,11 +859,6 @@ def evaluate_manifest(
         clip_event_results: list[dict[str, object]] = []
         for event_index, event in enumerate(manifest_clip.events):
             labelled_count += 1
-            next_onset = (
-                manifest_clip.events[event_index + 1].onset_s
-                if event_index + 1 < len(manifest_clip.events)
-                else math.inf
-            )
             match_index = next(
                 (
                     index
@@ -745,7 +866,8 @@ def evaluate_manifest(
                     if index not in used_incidents
                     and incident["kind"] == event.kind.value
                     and float(incident["detected_at"]) + _EPSILON >= event.onset_s
-                    and float(incident["detected_at"]) < next_onset
+                    and float(incident["detected_at"])
+                    <= event.match_end_s + _EPSILON
                 ),
                 None,
             )
@@ -756,6 +878,7 @@ def evaluate_manifest(
                     "event_index": event_index,
                     "kind": event.kind.value,
                     "onset_s": event.onset_s,
+                    "match_end_s": event.match_end_s,
                     "expected_recovery": event.recovered,
                     "matched": False,
                     "detected_at": None,
@@ -783,6 +906,7 @@ def evaluate_manifest(
                     "event_index": event_index,
                     "kind": event.kind.value,
                     "onset_s": event.onset_s,
+                    "match_end_s": event.match_end_s,
                     "expected_recovery": event.recovered,
                     "matched": True,
                     "detected_at": detected_at,
@@ -829,6 +953,8 @@ def evaluate_manifest(
         "dataset": manifest.dataset,
         "strategy": strategy,
         "trace_sha256": actual_trace_sha256,
+        "model_sha256": replay["model_sha256"],
+        "fall_config_fingerprint": replay["fall_config_fingerprint"],
         "event_counts": {
             "labelled": labelled_count,
             "detected": detected_count,

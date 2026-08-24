@@ -118,16 +118,24 @@ person IDs, terminal/current state, timestamp, kind, evidence level,
 ## Trace extraction and replay
 
 The extractor validates source SHA-256 before MediaPipe starts, serializes only
-finite numeric/image evidence with schema and source checksum provenance, and
-atomically replaces its output. If an existing trace names different source
-checksums it refuses replacement unless `--force` is explicit.
+finite numeric/image evidence, and atomically replaces its output. Every clip
+header records the source and pose-model SHA-256 plus a canonical fingerprint
+of the exact `FallConfig` used to derive features, including profile,
+thresholds, and furniture ROIs. Replay loads configuration with production
+precedence (explicit profile, then file profile, then `balanced`) and rejects a
+different fingerprint with a re-extraction instruction. If an existing trace
+names different source checksums, replacement also requires `--force`.
+The fingerprint is SHA-256 over compact, key-sorted JSON containing
+`schema_version = 1` and every `FallConfig` dataclass field; enum profiles use
+their string value and ROIs use ordered names and normalized point pairs.
 
 ```bash
 uv run python scripts/extract_fall_traces.py \
   --manifest evaluation/manifests/local-falls.toml \
   --output evaluation/traces/local-falls-v1.jsonl \
   --source-root /path/to/repository-root \
-  --model-path /path/to/pose_landmarker_full.task
+  --model-path /path/to/pose_landmarker_full.task \
+  --fall-profile balanced
 
 uv run fall-evaluate \
   --manifest evaluation/manifests/local-falls.toml \
@@ -145,8 +153,10 @@ Four replay strategies are supported, exactly:
 Reports contain labelled/detected/true-positive/false-positive/missed event
 counts, event sensitivity, precision, false alerts per monitored hour, miss
 rate, each matched alert latency and its median, detection-to-recovery timing,
-and state dwell. Incidents are matched to ordered labelled onsets by kind;
-extra incidents are false positives. Metrics are event-level, never frame-level.
+and state dwell. Every label has an explicit `match_end_s`; only a same-kind
+incident detected in the inclusive interval from `onset_s` through
+`match_end_s` is a true positive. A later incident is a false positive and the
+unmatched label is missed. Metrics are event-level, never frame-level.
 
 The local balanced-profile regression has four of four labelled
 `OBSERVED_FALL` incidents: clips 1 and 2 are `HIGH`, clips 3 and 4 are
@@ -159,8 +169,15 @@ Start from `evaluation/manifests/up-fall.example.toml`,
 `urfd.example.toml`, or `le2i.example.toml`. Replace every zero checksum and
 illustrative path/time with values from your licensed local copy. Each clip
 requires a repo-relative source, SHA-256, positive duration, subject, trial,
-camera, split, and zero or more ordered event labels (`kind`, `onset_s`, and
-whether recovery is expected).
+camera, split, and zero or more ordered event labels (`kind`, `onset_s`,
+`match_end_s`, and whether recovery is expected). `match_end_s` must be after
+the onset and no later than clip duration; the examples use a two-second
+post-onset association horizon, clamped to the clip end.
+
+Trace validation requires at least one observation record for every decoded
+frame index from zero through `frame_count - 1`. Multiple identities may share
+a frame timestamp, but `(frame_index, person_id)` keys must be unique and frame
+timestamps must be consistent, nondecreasing, and inside the clip duration.
 
 Subject, trial, and camera keys are mandatory. The loader rejects a subject
 assigned to more than one declared split, which keeps all trials, frames, and

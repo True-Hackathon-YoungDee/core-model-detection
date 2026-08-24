@@ -1,7 +1,7 @@
 schema_version = 1
 dataset = "local-falls"
 trace = "../traces/local-falls-v1.jsonl"
-trace_sha256 = "a384159da1a439495c7b14c893cd2dbf8166ff37ea23efca2555c12c856acc27"
+trace_sha256 = "0494a482141be628212a17a773fd2bb311f04d33880a42de76b050fef0995736"
 
 [[clips]]
 id = "fall-example-1"
@@ -16,6 +16,7 @@ duration_s = 11.34278565471226
 [[clips.events]]
 kind = "OBSERVED_FALL"
 onset_s = 4.128
+match_end_s = 6.128
 recovered = false
 
 [[clips]]
@@ -31,6 +32,7 @@ duration_s = 4.066666666666666
 [[clips.events]]
 kind = "OBSERVED_FALL"
 onset_s = 2.166
+match_end_s = 4.066666666666666
 recovered = false
 
 [[clips]]
@@ -46,6 +48,7 @@ duration_s = 2.933333333333333
 [[clips.events]]
 kind = "OBSERVED_FALL"
 onset_s = 0.866
+match_end_s = 2.866
 recovered = false
 
 [[clips]]
@@ -61,4 +64,5 @@ duration_s = 3.0
 [[clips.events]]
 kind = "OBSERVED_FALL"
 onset_s = 0.866
+match_end_s = 2.866
 recovered = true

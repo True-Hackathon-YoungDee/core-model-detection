@@ -184,8 +184,13 @@ uv run python scripts/extract_fall_traces.py \
   --manifest evaluation/manifests/local-falls.toml \
   --output evaluation/traces/local-falls-v1.jsonl \
   --source-root /path/to/repository-root \
-  --model-path /path/to/pose_landmarker_full.task
+  --model-path /path/to/pose_landmarker_full.task \
+  --fall-profile balanced
 ```
+
+Extraction records the pose-model SHA-256 and a canonical fingerprint of the
+exact fall configuration, including furniture ROIs. Replay must use that same
+configuration; a profile, threshold, or ROI mismatch requires re-extraction.
 
 ## Notes that bite
 

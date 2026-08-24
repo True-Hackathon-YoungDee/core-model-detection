@@ -17,8 +17,13 @@ from typing import Callable, Iterable
 import cv2
 
 from fall_detection.engine import build_engine
-from fall_detection.evaluation import EvaluationManifest, ManifestClip, load_manifest
-from fall_detection.fall_config import FallConfig
+from fall_detection.evaluation import (
+    EvaluationManifest,
+    ManifestClip,
+    fall_config_fingerprint,
+    load_manifest,
+)
+from fall_detection.fall_config import FallConfig, FallProfile, load_fall_config
 from fall_detection.fall_evidence import ImageEvidenceExtractor
 from fall_detection.pose import PoseConfig, RunningMode
 from fall_detection.runner import PosePipeline
@@ -26,7 +31,10 @@ from fall_detection.strategy import Strategy
 
 logger = logging.getLogger("fall-trace-extractor")
 
-ClipExtractor = Callable[[ManifestClip, Path, Path], Iterable[dict[str, object]]]
+ClipExtractor = Callable[
+    [ManifestClip, Path, Path, FallConfig, str],
+    Iterable[dict[str, object]],
+]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,6 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="root joined to portable manifest source paths",
     )
     parser.add_argument("--model-path", type=Path, required=True)
+    parser.add_argument("--fall-config", type=Path)
+    parser.add_argument(
+        "--fall-profile", choices=tuple(profile.value for profile in FallProfile)
+    )
     parser.add_argument(
         "--force",
         action="store_true",
@@ -125,6 +137,8 @@ def _clip_records(
     clip: ManifestClip,
     source_path: Path,
     model_path: Path,
+    fall_config: FallConfig,
+    model_sha256: str,
 ) -> Iterable[dict[str, object]]:
     capture = cv2.VideoCapture(str(source_path))
     if not capture.isOpened():
@@ -153,6 +167,8 @@ def _clip_records(
         "record_type": "clip",
         "clip_id": clip.clip_id,
         "source_sha256": clip.source_sha256,
+        "model_sha256": model_sha256,
+        "fall_config_fingerprint": fall_config_fingerprint(fall_config),
         "duration_s": clip.duration_s,
         "frame_width": frame_width,
         "frame_height": frame_height,
@@ -168,7 +184,6 @@ def _clip_records(
     engine = None
     pipeline = PosePipeline(smoothing=True, best_only=True)
     extractors: dict[int, ImageEvidenceExtractor] = {}
-    fall_config = FallConfig()
     frame_index = 0
     try:
         engine = build_engine(config, RunningMode.VIDEO, Strategy.NATIVE)
@@ -228,12 +243,14 @@ def extract_manifest(
     model_path: Path,
     output: Path,
     *,
+    fall_config: FallConfig,
     force: bool,
     clip_extractor: ClipExtractor = _clip_records,
 ) -> None:
     """Extract all manifest clips to one atomically replaced JSONL trace."""
     if not model_path.is_file():
         raise ValueError(f"model file does not exist: {model_path}")
+    model_sha256 = file_sha256(model_path)
     expected = {clip.clip_id: clip.source_sha256 for clip in manifest.clips}
     validate_output_compatibility(output, expected, force=force)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -251,7 +268,11 @@ def extract_manifest(
             for clip in manifest.clips:
                 logger.info("extracting %s from %s", clip.clip_id, sources[clip.clip_id])
                 for record in clip_extractor(
-                    clip, sources[clip.clip_id], model_path
+                    clip,
+                    sources[clip.clip_id],
+                    model_path,
+                    fall_config,
+                    model_sha256,
                 ):
                     temporary.write(encode_record(record))
             temporary.flush()
@@ -268,12 +289,14 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:
         manifest = load_manifest(args.manifest)
+        fall_config = load_fall_config(args.fall_config, args.fall_profile)
         sources = resolve_sources(manifest, args.source_root)
         extract_manifest(
             manifest,
             sources,
             args.model_path.resolve(),
             args.output.resolve(),
+            fall_config=fall_config,
             force=args.force,
         )
     except ValueError as error:

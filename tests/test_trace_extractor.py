@@ -6,13 +6,18 @@ import json
 import math
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from fall_detection.evaluation import load_manifest, replay_trace
-from fall_detection.evaluation import ManifestClip
-from fall_detection.fall_config import FallConfig
+from fall_detection.evaluation import (
+    ManifestClip,
+    fall_config_fingerprint,
+    load_manifest,
+    replay_trace,
+)
+from fall_detection.fall_config import FallConfig, FurnitureROI
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "extract_fall_traces.py"
@@ -39,6 +44,8 @@ def test_extractor_cli_exposes_portable_source_and_model_overrides():
     assert "--output" in completed.stdout
     assert "--source-root" in completed.stdout
     assert "--model-path" in completed.stdout
+    assert "--fall-config" in completed.stdout
+    assert "--fall-profile" in completed.stdout
     assert "--force" in completed.stdout
 
 
@@ -144,15 +151,28 @@ def test_extract_manifest_writes_a_replayable_atomic_trace(tmp_path: Path):
     output = tmp_path / "trace.jsonl"
     model = tmp_path / "pose.task"
     model.write_bytes(b"model")
+    bed = FurnitureROI(
+        "bed", ((0.1, 0.2), (0.9, 0.2), (0.9, 0.9), (0.1, 0.9))
+    )
+    fall_config = replace(FallConfig(), furniture_rois=(bed,))
+    expected_model_sha = hashlib.sha256(b"model").hexdigest()
 
-    def fake_clip_records(clip, source_path, model_path):
+    def fake_clip_records(
+        clip, source_path, model_path, extracted_fall_config, model_sha256
+    ):
         assert source_path == source
         assert model_path == model
+        assert extracted_fall_config == fall_config
+        assert model_sha256 == expected_model_sha
         yield {
             "schema_version": 1,
             "record_type": "clip",
             "clip_id": clip.clip_id,
             "source_sha256": clip.source_sha256,
+            "model_sha256": model_sha256,
+            "fall_config_fingerprint": fall_config_fingerprint(
+                extracted_fall_config
+            ),
             "duration_s": 1.0,
             "frame_width": 640,
             "frame_height": 360,
@@ -177,13 +197,17 @@ def test_extract_manifest_writes_a_replayable_atomic_trace(tmp_path: Path):
         module.resolve_sources(manifest, tmp_path),
         model,
         output,
+        fall_config=fall_config,
         force=False,
         clip_extractor=fake_clip_records,
     )
 
-    replay = replay_trace(output, "temporal-fsm", FallConfig())
+    replay = replay_trace(output, "temporal-fsm", fall_config)
     assert replay["clips"][0]["clip_id"] == "clip-a"
     assert replay["clips"][0]["incidents"] == []
+    assert replay["model_sha256"] == expected_model_sha
+    with pytest.raises(ValueError, match="fall config fingerprint.*re-extract"):
+        replay_trace(output, "temporal-fsm", FallConfig())
     assert list(tmp_path.glob(".trace.jsonl.*.tmp")) == []
 
 
@@ -220,7 +244,21 @@ def test_clip_extraction_validates_finite_video_metadata_before_model_start(
         events=(),
     )
 
-    header = next(module._clip_records(clip, tmp_path / "clip.mp4", tmp_path / "model.task"))
+    bed = FurnitureROI(
+        "bed", ((0.1, 0.2), (0.9, 0.2), (0.9, 0.9), (0.1, 0.9))
+    )
+    fall_config = replace(FallConfig(), furniture_rois=(bed,))
+    header = next(
+        module._clip_records(
+            clip,
+            tmp_path / "clip.mp4",
+            tmp_path / "model.task",
+            fall_config,
+            "d" * 64,
+        )
+    )
 
     assert header["fps"] == 30.0
     assert header["frame_count"] == 30
+    assert header["model_sha256"] == "d" * 64
+    assert header["fall_config_fingerprint"] == fall_config_fingerprint(fall_config)

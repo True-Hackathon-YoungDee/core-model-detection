@@ -18,4 +18,5 @@ duration_s = 8.0
 [[clips.events]]
 kind = "OBSERVED_FALL"
 onset_s = 2.5
+match_end_s = 4.5
 recovered = false

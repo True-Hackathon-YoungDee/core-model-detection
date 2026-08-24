@@ -215,6 +215,20 @@ rate, alert latency, recovery timing, and state dwell. Support replay
 comparisons for the legacy strict-AND vote, relaxed OR vote, k-of-N vote, and
 the temporal FSM.
 
+Each event label declares `onset_s` and a required `match_end_s` with
+`onset_s < match_end_s <= duration_s`. Only a same-kind incident in that
+association interval is matched; a later incident is a false positive while
+the label remains missed. Repository labels use a two-second post-onset window,
+clamped to clip duration.
+
+Because image evidence depends on `FallConfig`, extraction records a canonical
+exact-config fingerprint (including furniture ROIs) and pose-model SHA-256 in
+every clip header. Replay requires consistent per-trace provenance and the same
+config fingerprint. A trace is complete only when observation records cover
+every frame index in `0..frame_count-1`; duplicate `(frame_index, person_id)`
+keys, inconsistent same-frame times, nonmonotonic frame times, and times outside
+the clip duration are invalid.
+
 Repository acceptance fixtures are labelled as follows:
 
 | Clip | Expected incident | Recovery |
