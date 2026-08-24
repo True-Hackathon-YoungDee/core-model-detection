@@ -9,6 +9,10 @@ wheels/
 # Virtual environments
 .venv
 
+# Local Git worktrees and Superpowers execution state
+.worktrees/
+.superpowers/
+
 # Downloaded MediaPipe model bundles
 models/
 *.task
