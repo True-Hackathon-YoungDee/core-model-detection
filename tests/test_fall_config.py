@@ -133,6 +133,32 @@ def test_malformed_or_ambiguous_furniture_rois_are_rejected(tmp_path, toml):
         load_fall_config(config_path)
 
 
+def test_collinear_furniture_roi_is_rejected(tmp_path):
+    """Accepting three collinear vertices would create a zero-area furniture region."""
+    config_path = tmp_path / "fall.toml"
+    config_path.write_text(
+        "[[furniture_rois]]\n"
+        'name = "line"\n'
+        "points = [[0.1, 0.1], [0.5, 0.5], [0.9, 0.9]]\n"
+    )
+
+    with pytest.raises(ValueError):
+        load_fall_config(config_path)
+
+
+def test_self_intersecting_furniture_roi_is_rejected(tmp_path):
+    """Accepting a bow-tie polygon would make furniture containment ambiguous."""
+    config_path = tmp_path / "fall.toml"
+    config_path.write_text(
+        "[[furniture_rois]]\n"
+        'name = "bow-tie"\n'
+        "points = [[0.1, 0.1], [0.9, 0.9], [0.1, 0.9], [0.7, 0.1]]\n"
+    )
+
+    with pytest.raises(ValueError):
+        load_fall_config(config_path)
+
+
 def test_furniture_roi_contains_interior_and_boundary_points():
     """Changing edge handling would incorrectly exclude torso centroids on furniture borders."""
     roi = FurnitureROI(name="bed", points=((0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)))

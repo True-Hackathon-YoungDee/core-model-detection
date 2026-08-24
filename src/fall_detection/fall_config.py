@@ -66,6 +66,10 @@ class FurnitureROI:
             normalized_points.append((x, y))
         if len(set(normalized_points)) < 3:
             raise ValueError("furniture ROI must have at least three distinct vertices")
+        if abs(_polygon_signed_area(normalized_points)) <= 1e-12:
+            raise ValueError("furniture ROI must enclose a non-zero area")
+        if _has_self_intersection(normalized_points):
+            raise ValueError("furniture ROI polygon must not self-intersect")
         object.__setattr__(self, "name", self.name.strip())
         object.__setattr__(self, "points", tuple(normalized_points))
 
@@ -101,6 +105,52 @@ def _point_on_segment(x: float, y: float, x1: float, y1: float, x2: float, y2: f
     if abs(cross_product) > epsilon:
         return False
     return min(x1, x2) - epsilon <= x <= max(x1, x2) + epsilon and min(y1, y2) - epsilon <= y <= max(y1, y2) + epsilon
+
+
+def _polygon_signed_area(points: list[tuple[float, float]]) -> float:
+    return sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(points, points[1:] + points[:1])) / 2.0
+
+
+def _has_self_intersection(points: list[tuple[float, float]]) -> bool:
+    edge_count = len(points)
+    for first_index in range(edge_count):
+        first_start = points[first_index]
+        first_end = points[(first_index + 1) % edge_count]
+        for second_index in range(first_index + 1, edge_count):
+            if (first_index + 1) % edge_count == second_index or (second_index + 1) % edge_count == first_index:
+                continue
+            second_start = points[second_index]
+            second_end = points[(second_index + 1) % edge_count]
+            if _segments_intersect(first_start, first_end, second_start, second_end):
+                return True
+    return False
+
+
+def _segments_intersect(
+    first_start: tuple[float, float],
+    first_end: tuple[float, float],
+    second_start: tuple[float, float],
+    second_end: tuple[float, float],
+) -> bool:
+    def orientation(start: tuple[float, float], end: tuple[float, float], point: tuple[float, float]) -> float:
+        return (end[0] - start[0]) * (point[1] - start[1]) - (end[1] - start[1]) * (point[0] - start[0])
+
+    epsilon = 1e-12
+    first_second_start = orientation(first_start, first_end, second_start)
+    first_second_end = orientation(first_start, first_end, second_end)
+    second_first_start = orientation(second_start, second_end, first_start)
+    second_first_end = orientation(second_start, second_end, first_end)
+    if (first_second_start > epsilon) != (first_second_end > epsilon) and (first_second_start < -epsilon) != (first_second_end < -epsilon):
+        return True
+    return (
+        abs(first_second_start) <= epsilon and _point_on_segment(*second_start, *first_start, *first_end)
+    ) or (
+        abs(first_second_end) <= epsilon and _point_on_segment(*second_end, *first_start, *first_end)
+    ) or (
+        abs(second_first_start) <= epsilon and _point_on_segment(*first_start, *second_start, *second_end)
+    ) or (
+        abs(second_first_end) <= epsilon and _point_on_segment(*first_end, *second_start, *second_end)
+    )
 
 
 @dataclass(frozen=True)
