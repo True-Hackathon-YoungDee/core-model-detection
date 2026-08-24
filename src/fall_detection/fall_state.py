@@ -84,7 +84,13 @@ class PersonFallTracker:
         self._height_history: deque[tuple[float, float]] = deque(maxlen=history_len)
         self._velocity_history: deque[tuple[float, np.ndarray]] = deque(maxlen=history_len)
 
-    def update(self, person: PersonPose, t_seconds: float) -> FallEvent:
+    def update(
+        self,
+        person: PersonPose,
+        t_seconds: float,
+        frame_width: int | None = None,
+        frame_height: int | None = None,
+    ) -> FallEvent:
         kinematics = self._kalman.stabilize(self.person_id, person.world_landmarks, t_seconds)
         stabilized = [_StabilizedPoint(x=k.position[0], y=k.position[1], z=k.position[2]) for k in kinematics]
 
@@ -109,7 +115,10 @@ class PersonFallTracker:
             np.array([com[0], com[2]]), stabilized, BASE_OF_SUPPORT_LANDMARKS
         )
 
-        x1, y1, x2, y2 = person.bbox
+        if frame_width and frame_height:
+            x1, y1, x2, y2 = person.bbox_in_pixels(frame_width, frame_height)
+        else:
+            x1, y1, x2, y2 = person.bbox
         aspect_ratio = (x2 - x1) / max(y2 - y1, 1e-6)
 
         vertical_displacement = sliding_vertical_displacement(
@@ -180,14 +189,20 @@ class FallStateManager:
         self.body_mass_kg = body_mass_kg
         self._trackers: dict[int, PersonFallTracker] = {}
 
-    def update(self, persons: list[PersonPose], t_seconds: float) -> list[FallEvent]:
+    def update(
+        self,
+        persons: list[PersonPose],
+        t_seconds: float,
+        frame_width: int | None = None,
+        frame_height: int | None = None,
+    ) -> list[FallEvent]:
         events = []
         for person in persons:
             tracker = self._trackers.get(person.person_id)
             if tracker is None:
                 tracker = PersonFallTracker(person.person_id, self.thresholds, self.body_mass_kg)
                 self._trackers[person.person_id] = tracker
-            events.append(tracker.update(person, t_seconds))
+            events.append(tracker.update(person, t_seconds, frame_width, frame_height))
         return events
 
     def forget(self, person_id: int) -> None:

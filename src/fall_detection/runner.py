@@ -127,6 +127,45 @@ class Display:
             self._opened = False
 
 
+class VideoWriter:
+    """Optional annotated-frame video sink; mirrors Display's lazy-open pattern.
+
+    Opens on the first frame (frame size isn't known until then) and stays
+    open for the life of the object, so it's safe to hand the same instance
+    across a caller's retry loop without truncating what's already written.
+    """
+
+    def __init__(self, path: str | Path | None, fps: float) -> None:
+        self.path = str(path) if path else None
+        self.fps = fps
+        self._writer: cv2.VideoWriter | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return self.path is not None
+
+    def write(self, frame) -> None:
+        if not self.enabled:
+            return
+        if self._writer is None:
+            height, width = frame.shape[:2]
+            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(self.path, fourcc, self.fps, (width, height))
+            if not writer.isOpened():
+                logger.error("failed to open output video for writing: %s", self.path)
+                self.path = None
+                return
+            self._writer = writer
+            logger.info("writing annotated output to %s (%dx%d @ %.1f fps)", self.path, width, height, self.fps)
+        self._writer.write(frame)
+
+    def close(self) -> None:
+        if self._writer is not None:
+            self._writer.release()
+            self._writer = None
+
+
 class PosePipeline:
     """Detected people -> stable ids -> smoothed landmarks."""
 
@@ -232,6 +271,7 @@ class VideoFileRunner:
         on_frame: Callable[[list[PersonPose], float, Any], None] | None = None,
         overlay: Callable[[Any, list[PersonPose]], Any] | None = None,
         on_person_lost: Callable[[int], None] | None = None,
+        output: str | Path | None = None,
     ) -> None:
         self.config = config
         self.path = str(path)
@@ -243,6 +283,7 @@ class VideoFileRunner:
         self.strategy = resolve_strategy(config)
         self.on_frame = on_frame
         self.overlay = overlay
+        self.output = output
 
     def run(self) -> int:
         capture = _open_capture(self.path, "video")
@@ -252,6 +293,7 @@ class VideoFileRunner:
             fps = 30.0
 
         meter = FpsMeter("video")
+        writer = VideoWriter(self.output, fps)
         frame_index = 0
         engine = None
         try:
@@ -272,7 +314,7 @@ class VideoFileRunner:
                 if self.on_frame:
                     self.on_frame(persons, t_seconds, frame)
 
-                if self.display.enabled:
+                if self.display.enabled or writer.enabled:
                     hud = (
                         f"VIDEO {self.config.model_variant}/{engine.label} "
                         f"persons={len(persons)}"
@@ -280,6 +322,7 @@ class VideoFileRunner:
                     canvas = annotate(frame, persons, hud)
                     if self.overlay:
                         canvas = self.overlay(canvas, persons)
+                    writer.write(canvas)
                     if not self.display.show(canvas):
                         break
 
@@ -293,6 +336,7 @@ class VideoFileRunner:
             if engine is not None:
                 engine.close()
             self.display.close()
+            writer.close()
             meter.summary()
         return frame_index
 

@@ -114,7 +114,9 @@ class PersonFallFSM:
             features.torso_angle_deg > thresholds.theta_threshold
             and features.bbox_aspect_ratio > thresholds.aspect_ratio_threshold
         )
-        self._static_prone_streak = self._static_prone_streak + 1 if is_prone_pose else 0
+        self._static_prone_streak = (
+            self._static_prone_streak + 1 if is_prone_pose else max(0, self._static_prone_streak - 1)
+        )
 
         if self.state == FallState.UPRIGHT:
             if downward_speed > thresholds.v_trigger:

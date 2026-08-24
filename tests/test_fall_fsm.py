@@ -242,3 +242,36 @@ def test_vote_fraction_reflects_buffer_contents_during_slumping():
     assert fsm.vote_fraction == pytest.approx(1.0)
     fsm.step(_features(t_seconds=1000.1, torso_angle=5.0, aspect_ratio=0.5, com_height=1.5))
     assert fsm.vote_fraction == pytest.approx(0.5)
+
+
+def test_streak_decays_instead_of_hard_reset_on_single_missed_frame():
+    """A single occlusion/jitter frame amid an otherwise-sustained prone
+    posture should cost the streak one frame, not erase it entirely -- a hard
+    reset would force the full static_prone_frames count to restart from
+    zero, which real detections can't tolerate given normal landmark noise."""
+    fsm = PersonFallFSM()
+    dt = 1.0 / 30.0
+    thresholds = FallThresholds()
+    t = 0.0
+    state = FallState.UPRIGHT
+    for i in range(thresholds.static_prone_frames - 1):
+        t = i * dt
+        state = fsm.step(
+            _features(t_seconds=t, downward_speed=0.0, torso_angle=80.0, aspect_ratio=2.5, com_height=0.1)
+        )
+    assert state == FallState.UPRIGHT
+    assert fsm._static_prone_streak == thresholds.static_prone_frames - 1
+
+    t += dt
+    state = fsm.step(
+        _features(t_seconds=t, downward_speed=0.0, torso_angle=10.0, aspect_ratio=2.5, com_height=0.1)
+    )
+    assert state == FallState.UPRIGHT
+    assert fsm._static_prone_streak == thresholds.static_prone_frames - 2
+
+    for _ in range(2):
+        t += dt
+        state = fsm.step(
+            _features(t_seconds=t, downward_speed=0.0, torso_angle=80.0, aspect_ratio=2.5, com_height=0.1)
+        )
+    assert state == FallState.SLUMPING

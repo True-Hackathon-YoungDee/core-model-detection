@@ -116,6 +116,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="append FALL_CONFIRMED/BED_REST state transitions as JSON lines to this file",
     )
 
+    parser.add_argument(
+        "--output",
+        help="write annotated frames to this video file (e.g. out.mp4); file sources only",
+    )
     parser.add_argument("--no-display", action="store_true", help="run headless, no cv2 window")
     parser.add_argument(
         "--display-max-width",
@@ -197,6 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     if not is_live and not Path(source).is_file():
         logger.error("video file not found: %s", source)
         return 2
+    if args.output and is_live:
+        logger.error("--output is only supported for file sources, not live streams")
+        return 2
 
     config = PoseConfig(
         model_variant=ModelVariant(args.model),
@@ -236,7 +243,10 @@ def main(argv: list[str] | None = None) -> int:
         latest_events: list = []
 
         def on_frame(persons, t_seconds, frame) -> None:
-            events = fall_manager.update(persons, t_seconds)
+            frame_height, frame_width = frame.shape[:2]
+            events = fall_manager.update(
+                persons, t_seconds, frame_width=frame_width, frame_height=frame_height
+            )
             latest_events[:] = events
             for event in events:
                 if not event.state_changed:
@@ -266,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         if is_live:
             runner = LiveStreamRunner(config, source, **runner_kwargs)
         else:
-            runner = VideoFileRunner(config, source, **runner_kwargs)
+            runner = VideoFileRunner(config, source, output=args.output, **runner_kwargs)
         frames = runner.run()
     except KeyboardInterrupt:
         logger.info("interrupted by user")

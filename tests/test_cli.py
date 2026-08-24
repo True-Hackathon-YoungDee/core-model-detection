@@ -1,4 +1,4 @@
-from fall_detection.cli import _parse_source, build_parser
+from fall_detection.cli import _parse_source, build_parser, main
 
 
 def test_parse_source_webcam_index_is_live():
@@ -42,3 +42,20 @@ def test_fall_detection_flags_can_be_overridden():
     assert args.no_fall_detection is True
     assert args.body_mass_kg == 55.5
     assert args.fall_alert_log == "alerts.jsonl"
+
+
+def test_output_flag_defaults_to_none():
+    args = build_parser().parse_args([])
+    assert args.output is None
+
+
+def test_output_flag_parses_path():
+    args = build_parser().parse_args(["--output", "out.mp4"])
+    assert args.output == "out.mp4"
+
+
+def test_main_rejects_output_flag_with_a_live_source():
+    """--output re-opens a cv2.VideoWriter that can't safely survive the
+    LiveStreamRunner's auto-restart-on-stall loop, so it's file-source only."""
+    code = main(["--source", "0", "--output", "out.mp4", "--no-display"])
+    assert code == 2
