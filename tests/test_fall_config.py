@@ -159,6 +159,23 @@ def test_self_intersecting_furniture_roi_is_rejected(tmp_path):
         load_fall_config(config_path)
 
 
+def test_closed_furniture_roi_loads_and_contains_points(tmp_path):
+    """A conventional repeated closing vertex must not make a valid ROI self-intersect."""
+    config_path = tmp_path / "fall.toml"
+    config_path.write_text(
+        "[[furniture_rois]]\n"
+        'name = "triangle"\n'
+        "points = [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.1]]\n"
+    )
+
+    roi = load_fall_config(config_path).furniture_rois[0]
+
+    assert roi.points == ((0.1, 0.1), (0.9, 0.1), (0.9, 0.9))
+    assert roi.contains((0.7, 0.2))
+    assert roi.contains((0.5, 0.1))
+    assert not roi.contains((0.2, 0.8))
+
+
 def test_furniture_roi_contains_interior_and_boundary_points():
     """Changing edge handling would incorrectly exclude torso centroids on furniture borders."""
     roi = FurnitureROI(name="bed", points=((0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)))

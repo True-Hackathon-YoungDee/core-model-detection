@@ -64,6 +64,8 @@ class FurnitureROI:
             x = _fraction(point[0], f"furniture ROI point {index} x")
             y = _fraction(point[1], f"furniture ROI point {index} y")
             normalized_points.append((x, y))
+        if len(normalized_points) > 1 and normalized_points[-1] == normalized_points[0]:
+            normalized_points.pop()
         if len(set(normalized_points)) < 3:
             raise ValueError("furniture ROI must have at least three distinct vertices")
         if abs(_polygon_signed_area(normalized_points)) <= 1e-12:
