@@ -28,7 +28,12 @@ def test_real_fall_sequence_produces_exactly_one_fall_confirmed_alert_line():
     manager = FallStateManager()
     alert_lines = []
     for t_seconds, person in fall_sequence():
-        for event in manager.update([person], t_seconds):
+        for event in manager.update(
+            [person],
+            t_seconds,
+            frame_width=1000,
+            frame_height=1000,
+        ):
             if event.state_changed and event.state in (FallState.FALL_CONFIRMED, FallState.BED_REST):
                 alert_lines.append(format_alert(event))
 

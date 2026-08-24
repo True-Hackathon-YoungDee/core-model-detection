@@ -24,7 +24,6 @@ class _Track:
     centroid: tuple[float, float]
     first_seen: float
     last_seen: float
-    missed: int = 0
     frames: int = field(default=1)
 
 
@@ -34,11 +33,18 @@ class IdentityTracker:
     def __init__(
         self,
         max_distance: float = 0.15,
-        max_missed: int = 15,
+        max_unseen_s: float = 2.5,
         on_lost: Callable[[int], None] | None = None,
     ) -> None:
+        if (
+            isinstance(max_unseen_s, bool)
+            or not isinstance(max_unseen_s, (int, float))
+            or not math.isfinite(max_unseen_s)
+            or max_unseen_s <= 0.0
+        ):
+            raise ValueError("max_unseen_s must be a positive finite number")
         self.max_distance = max_distance
-        self.max_missed = max_missed
+        self.max_unseen_s = float(max_unseen_s)
         self._on_lost = on_lost
         self._tracks: dict[int, _Track] = {}
         self._next_id = 0
@@ -49,6 +55,7 @@ class IdentityTracker:
 
     def assign(self, centroids: Sequence[tuple[float, float]], now: float) -> list[int]:
         """Return one id per centroid, in the same order."""
+        self._age_out(set(), now)
         assigned: list[int | None] = [None] * len(centroids)
 
         pairs = [
@@ -71,7 +78,6 @@ class IdentityTracker:
             track = self._tracks[track_id]
             track.centroid = centroids[index]
             track.last_seen = now
-            track.missed = 0
             track.frames += 1
 
         for index, person_id in enumerate(assigned):
@@ -86,6 +92,7 @@ class IdentityTracker:
                 last_seen=now,
             )
             assigned[index] = person_id
+            used_tracks.add(person_id)
             logger.info("person %d entered (%d tracked)", person_id, len(self._tracks))
 
         self._age_out(used_tracks, now)
@@ -96,8 +103,7 @@ class IdentityTracker:
             if track_id in seen:
                 continue
             track = self._tracks[track_id]
-            track.missed += 1
-            if track.missed <= self.max_missed:
+            if now - track.last_seen <= self.max_unseen_s + 1e-12:
                 continue
             del self._tracks[track_id]
             logger.info(
