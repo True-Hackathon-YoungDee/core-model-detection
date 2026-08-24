@@ -182,7 +182,7 @@ isolated worktree:
 ```bash
 uv run python scripts/extract_fall_traces.py \
   --manifest evaluation/manifests/local-falls.toml \
-  --output evaluation/traces/local-falls-v1.jsonl \
+  --output evaluation/traces/local-regression-v2.jsonl \
   --source-root /path/to/repository-root \
   --model-path /path/to/pose_landmarker_full.task \
   --fall-profile balanced

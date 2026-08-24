@@ -84,7 +84,7 @@
 - `FallFeatures` contains `t_seconds`, `valid`, `torso_angle_deg`,
   `bbox_aspect_ratio`, `hip_downward_speed_bh_s`,
   `bbox_downward_speed_bh_s`, `torso_rotation_deg_s`,
-  `height_collapse_fraction`, `motion_bh_s`, `visibility_quality`,
+  `height_collapse_fraction`, `motion_bh_s`, `motion_available`, `visibility_quality`,
   `torso_centroid`, `furniture_roi`, and `scale_source`.
 - `FallEvidence` contains the individual dynamic/posture/stillness/quality
   gates and a `dynamic_cue_count` property.
@@ -327,7 +327,7 @@
 - Create: `evaluation/manifests/urfd.example.toml`
 - Create: `evaluation/manifests/le2i.example.toml`
 - Create: `scripts/extract_fall_traces.py`
-- Create: `evaluation/traces/local-falls-v1.jsonl`
+- Create: `evaluation/traces/local-regression-v2.jsonl`
 - Create: `docs/fall-detection.md`
 - Modify: `README.md`
 - Modify: `.gitignore`
@@ -366,7 +366,7 @@
 
 - [ ] **Step 4: Add labelled clip acceptance tests and tune only from traces**
 
-  Replay `local-falls-v1.jsonl` with the balanced profile and assert exactly one
+  Replay `local-regression-v2.jsonl` with the balanced profile and assert exactly one
   `OBSERVED_FALL` for each of clips 1-4, no recovery for clips 1-3, and recovery
   for clip 4. Run the no-person sample videos through extraction and assert zero
   incidents. Record any seed adjustment in the spec and keep all three profile
@@ -386,4 +386,3 @@
   and `git diff --check`. Confirm no nonterminal fresh-observation trace exceeds
   the configured timeout and no video/model file is staged. Commit
   `feat: add fall replay evaluation and operating guide`.
-

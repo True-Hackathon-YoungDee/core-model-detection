@@ -263,6 +263,7 @@ def main(argv: list[str] | None = None) -> int:
         smoothing=not args.no_smoothing,
         best_only=args.best_only,
         max_frames=args.max_frames,
+        max_unseen_s=fall_config.identity_timeout_s,
     )
 
     resources = ExitStack()
@@ -352,6 +353,9 @@ def main(argv: list[str] | None = None) -> int:
         return 130
     except FileNotFoundError as error:
         logger.error("%s", error)
+        return 2
+    except OSError as error:
+        logger.error("fall runtime I/O failed: %s", error)
         return 2
     except Exception as error:
         logger.error("pose run failed: %s", error)

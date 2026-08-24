@@ -20,6 +20,7 @@ from fall_detection.engine import build_engine
 from fall_detection.evaluation import (
     EvaluationManifest,
     ManifestClip,
+    TRACE_SCHEMA_VERSION,
     fall_config_fingerprint,
     load_manifest,
 )
@@ -163,7 +164,7 @@ def _clip_records(
         )
 
     yield {
-        "schema_version": 1,
+        "schema_version": TRACE_SCHEMA_VERSION,
         "record_type": "clip",
         "clip_id": clip.clip_id,
         "source_sha256": clip.source_sha256,
@@ -182,7 +183,11 @@ def _clip_records(
         strategy=Strategy.NATIVE,
     )
     engine = None
-    pipeline = PosePipeline(smoothing=True, best_only=True)
+    pipeline = PosePipeline(
+        smoothing=True,
+        best_only=True,
+        max_unseen_s=fall_config.identity_timeout_s,
+    )
     extractors: dict[int, ImageEvidenceExtractor] = {}
     frame_index = 0
     try:
@@ -196,7 +201,7 @@ def _clip_records(
             persons = pipeline.process(engine.infer(frame, timestamp_ms), t_seconds)
             if not persons:
                 yield {
-                    "schema_version": 1,
+                    "schema_version": TRACE_SCHEMA_VERSION,
                     "record_type": "observation",
                     "clip_id": clip.clip_id,
                     "source_sha256": clip.source_sha256,
@@ -216,7 +221,7 @@ def _clip_records(
                     frame_height=frame_height,
                 )
                 yield {
-                    "schema_version": 1,
+                    "schema_version": TRACE_SCHEMA_VERSION,
                     "record_type": "observation",
                     "clip_id": clip.clip_id,
                     "source_sha256": clip.source_sha256,
@@ -299,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
             fall_config=fall_config,
             force=args.force,
         )
-    except ValueError as error:
+    except (OSError, ValueError) as error:
         logger.error("extraction failed: %s", error)
         return 2
     return 0

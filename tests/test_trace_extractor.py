@@ -49,6 +49,30 @@ def test_extractor_cli_exposes_portable_source_and_model_overrides():
     assert "--force" in completed.stdout
 
 
+def test_extractor_cli_returns_two_for_routine_io_error(monkeypatch, caplog):
+    module = _script_module()
+
+    def fail_manifest(path):
+        raise OSError("manifest storage unavailable")
+
+    monkeypatch.setattr(module, "load_manifest", fail_manifest)
+
+    with caplog.at_level("ERROR"):
+        code = module.main(
+            [
+                "--manifest",
+                "manifest.toml",
+                "--output",
+                "trace.jsonl",
+                "--model-path",
+                "pose.task",
+            ]
+        )
+
+    assert code == 2
+    assert "manifest storage unavailable" in caplog.text
+
+
 def test_existing_trace_with_different_source_checksum_requires_force(tmp_path: Path):
     output = tmp_path / "trace.jsonl"
     output.write_text(

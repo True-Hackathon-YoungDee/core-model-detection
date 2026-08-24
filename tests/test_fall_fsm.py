@@ -409,7 +409,7 @@ def test_all_three_dynamic_cues_allow_medium_confirmation_after_observations_are
     assert alert.evidence_level is FallEvidenceLevel.MEDIUM
 
 
-def test_all_three_dynamic_cues_allow_medium_after_continuous_covered_postural_window():
+def test_all_three_dynamic_cues_allow_medium_with_partial_posture_support():
     fsm = PersonFallFSM(FallConfig())
     started_at = _start_observed_fall(
         fsm,
@@ -418,8 +418,20 @@ def test_all_three_dynamic_cues_allow_medium_after_continuous_covered_postural_w
     )
 
     for index in range(1, 6):
-        evaluation = fsm.step(_features(started_at + index * 0.2))
-    alert = fsm.step(_features(started_at + 1.2))
+        evaluation = fsm.step(
+            _features(
+                started_at + index * 0.2,
+                torso_angle_deg=60.0,
+                bbox_aspect_ratio=0.5,
+            )
+        )
+    alert = fsm.step(
+        _features(
+            started_at + 1.2,
+            torso_angle_deg=60.0,
+            bbox_aspect_ratio=0.5,
+        )
+    )
 
     assert evaluation.state is FallState.POST_STABILITY_EVALUATION
     assert evaluation.coverage_fraction == pytest.approx(1.0)
@@ -427,6 +439,40 @@ def test_all_three_dynamic_cues_allow_medium_after_continuous_covered_postural_w
     assert alert.state is FallState.FALL_CONFIRMED
     assert alert.alert_kind is FallAlertKind.OBSERVED_FALL
     assert alert.evidence_level is FallEvidenceLevel.MEDIUM
+
+
+def test_all_three_cue_controlled_impulse_without_posture_support_is_rejected():
+    fsm = PersonFallFSM(FallConfig())
+    started_at = _start_observed_fall(
+        fsm,
+        all_three_dynamic_cues=True,
+        slumping_posture=False,
+    )
+
+    decisions = [
+        fsm.step(_features(started_at + index * 0.2))
+        for index in range(1, 6)
+    ]
+    decisions.append(fsm.step(_features(2.0)))
+
+    assert all(decision.alert_kind is None for decision in decisions)
+    assert decisions[-1].state is FallState.UPRIGHT
+
+
+def test_all_three_cue_tracking_loss_without_postimpact_support_is_rejected():
+    fsm = PersonFallFSM(FallConfig())
+    _start_observed_fall(
+        fsm,
+        all_three_dynamic_cues=True,
+        slumping_posture=False,
+    )
+
+    timeout = fsm.observe_gap(2.0)
+    after = fsm.observe_gap(2.1)
+
+    assert timeout.state is FallState.UPRIGHT
+    assert timeout.alert_kind is None
+    assert after.alert_kind is None
 
 
 def test_two_dynamic_cues_do_not_use_continuous_coverage_medium_fallback():
@@ -570,6 +616,87 @@ def test_brief_prone_pose_does_not_trigger_persistent_prone():
 
     assert decision.state is FallState.UPRIGHT
     assert decision.alert_kind is None
+
+
+@pytest.mark.parametrize(
+    ("action", "sequence"),
+    [
+        pytest.param(
+            "rapid sitting",
+            (
+                _features(0.0),
+                _features(
+                    0.1,
+                    downward_speed_bh_s=0.7,
+                    height_collapse_fraction=0.2,
+                ),
+                _features(0.2, torso_angle_deg=30.0, torso_rotation_deg_s=70.0),
+                _features(2.1),
+            ),
+            id="rapid-sitting",
+        ),
+        pytest.param(
+            "bending",
+            (
+                _features(0.0),
+                _features(0.2, torso_angle_deg=45.0, torso_rotation_deg_s=70.0),
+                _features(0.5),
+                _features(2.5),
+            ),
+            id="bending",
+        ),
+        pytest.param(
+            "crouching",
+            (
+                _features(0.0),
+                _features(
+                    0.1,
+                    torso_angle_deg=20.0,
+                    downward_speed_bh_s=0.7,
+                    height_collapse_fraction=0.2,
+                ),
+                _features(0.4, torso_angle_deg=20.0),
+                _features(2.1),
+            ),
+            id="crouching",
+        ),
+        pytest.param(
+            "controlled lying",
+            (
+                _features(0.0, downward_speed_bh_s=0.6),
+                _features(1.0, torso_rotation_deg_s=70.0),
+                _features(2.0, torso_angle_deg=45.0, height_collapse_fraction=0.2),
+                _prone(2.5),
+                _features(3.0),
+                _features(4.0),
+            ),
+            id="controlled-lying",
+        ),
+        pytest.param(
+            "getting up",
+            (
+                _prone(0.0),
+                _prone(0.3),
+                _features(
+                    0.6,
+                    downward_speed_bh_s=-0.7,
+                    torso_rotation_deg_s=70.0,
+                ),
+                _features(1.0),
+                _features(2.5),
+            ),
+            id="getting-up",
+        ),
+    ],
+)
+def test_controlled_daily_actions_do_not_emit_fall_alerts(action, sequence):
+    fsm = PersonFallFSM(FallConfig())
+
+    decisions = [fsm.step(features) for features in sequence]
+
+    assert action
+    assert all(decision.alert_kind is None for decision in decisions)
+    assert decisions[-1].state is FallState.UPRIGHT
 
 
 def test_qualifying_furniture_fraction_changes_alert_kind_and_terminal_state():

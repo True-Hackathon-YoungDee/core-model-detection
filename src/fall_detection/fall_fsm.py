@@ -68,6 +68,7 @@ class _DurationAccumulator:
         self.last_furniture_roi: str | None = None
         self.covered_s = 0.0
         self.posture_s = 0.0
+        self.posture_support_s = 0.0
         self.furniture_s = 0.0
 
     def observe(
@@ -87,6 +88,11 @@ class _DurationAccumulator:
                 and self.last_evidence.quality_ok
             ):
                 self.covered_s += interval_s
+                if (
+                    self.last_evidence.posture_torso
+                    or self.last_evidence.posture_aspect
+                ):
+                    self.posture_support_s += interval_s
                 if self.last_evidence.posture:
                     self.posture_s += interval_s
                     if self.last_furniture_roi in configured_roi_names:
@@ -108,6 +114,7 @@ class _DurationAccumulator:
         self.last_furniture_roi = None
         self.covered_s = 0.0
         self.posture_s = 0.0
+        self.posture_support_s = 0.0
         self.furniture_s = 0.0
 
     def metrics(self, t_seconds: float) -> tuple[float, float, float]:
@@ -132,6 +139,7 @@ class PersonFallFSM:
         self._dynamic_cue_times: dict[str, float] = {}
         self._candidate_since: float | None = None
         self._all_dynamic_cues_seen = False
+        self._post_impact_support_seen = False
         self._cooldown_until: float | None = None
         self._configured_roi_names = frozenset(roi.name for roi in config.furniture_rois)
         self._posture = _DurationAccumulator(config.max_observation_gap_s)
@@ -186,6 +194,9 @@ class PersonFallFSM:
             elif evidence.quality_ok:
                 self.state = FallState.SLUMPING
                 self._posture.clear()
+                self._post_impact_support_seen = (
+                    evidence.posture_torso or evidence.posture_aspect
+                )
                 self._posture.observe(
                     t_seconds,
                     evidence,
@@ -193,6 +204,10 @@ class PersonFallFSM:
                     self._configured_roi_names,
                 )
         elif self.state is FallState.SLUMPING:
+            self._post_impact_support_seen = self._post_impact_support_seen or (
+                evidence.quality_ok
+                and (evidence.posture_torso or evidence.posture_aspect)
+            )
             self._posture.observe(
                 t_seconds,
                 evidence,
@@ -215,8 +230,12 @@ class PersonFallFSM:
                     FallEvidenceLevel.HIGH,
                     t_seconds,
                 )
-            elif self._all_dynamic_cues_seen and self._postural_window_is_covered(
-                t_seconds, self.config.observed_fall_postural_window_s
+            elif (
+                self._all_dynamic_cues_seen
+                and self._postural_window_is_covered(
+                    t_seconds, self.config.observed_fall_postural_window_s
+                )
+                and self._partial_posture_support_qualifies()
             ):
                 self._queue_evaluation(
                     self._qualified_alert_kind(FallAlertKind.OBSERVED_FALL),
@@ -255,7 +274,7 @@ class PersonFallFSM:
         if self.state in (FallState.DESCENDING, FallState.IMPACT, FallState.SLUMPING) and (
             self._candidate_timed_out(t_seconds)
         ):
-            if self._all_dynamic_cues_seen:
+            if self._all_dynamic_cues_seen and self._post_impact_support_seen:
                 self._queue_evaluation(
                     self._qualified_alert_kind(FallAlertKind.OBSERVED_FALL),
                     FallEvidenceLevel.MEDIUM,
@@ -278,6 +297,7 @@ class PersonFallFSM:
         self._dynamic_cue_times.clear()
         self._candidate_since = None
         self._all_dynamic_cues_seen = False
+        self._post_impact_support_seen = False
         self._cooldown_until = None
         self._posture.clear()
         self._candidate_alert_kind = None
@@ -311,6 +331,7 @@ class PersonFallFSM:
         self._dynamic_cue_times.clear()
         self._candidate_since = None
         self._all_dynamic_cues_seen = False
+        self._post_impact_support_seen = False
         self._cooldown_until = t_seconds + self.config.rejection_cooldown_s
         self._posture.clear()
         self._candidate_alert_kind = None
@@ -342,6 +363,7 @@ class PersonFallFSM:
             self._candidate_since = None
             self._dynamic_cue_times.clear()
             self._all_dynamic_cues_seen = False
+            self._post_impact_support_seen = False
             self._evidence_required_s = self.config.persistent_prone_dwell_s
             self._qualified_metrics = self._posture.metrics(t_seconds)
             self._qualified_persistent_alert_kind = self._qualified_alert_kind(
@@ -373,6 +395,15 @@ class PersonFallFSM:
         return (
             elapsed_s + _EPSILON >= required_s
             and coverage_fraction + _EPSILON >= self.config.min_temporal_coverage
+        )
+
+    def _partial_posture_support_qualifies(self) -> bool:
+        if self._posture.covered_s <= 0.0:
+            return False
+        support_fraction = self._posture.posture_support_s / self._posture.covered_s
+        return (
+            support_fraction + _EPSILON
+            >= self.config.posture_evidence_fraction / 2.0
         )
 
     def _queue_evaluation(
@@ -448,6 +479,7 @@ class PersonFallFSM:
         self._dynamic_cue_times.clear()
         self._candidate_since = None
         self._all_dynamic_cues_seen = False
+        self._post_impact_support_seen = False
         self._cooldown_until = None
         self._candidate_alert_kind = None
         self._pending_alert_kind = None

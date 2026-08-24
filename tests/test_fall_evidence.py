@@ -264,6 +264,24 @@ def test_observation_gap_beyond_limit_resets_all_derivatives():
     assert features.bbox_downward_speed_bh_s == 0.0
     assert features.torso_rotation_deg_s == 0.0
     assert features.motion_bh_s == 0.0
+    assert features.motion_available is False
+    assert classify_evidence(features, FallConfig()).stillness is False
+
+
+def test_first_observation_does_not_claim_zero_motion_stillness():
+    config = FallConfig()
+    extractor = ImageEvidenceExtractor(config)
+    person = _pixel_person(
+        bbox=(200.0, 300.0, 500.0, 700.0),
+        shoulder_center=(250.0, 500.0),
+        hip_center=(450.0, 500.0),
+    )
+
+    features = extractor.update(person, 0.0, 1000, 1000)
+
+    assert features.motion_bh_s == 0.0
+    assert features.motion_available is False
+    assert classify_evidence(features, config).stillness is False
 
 
 def test_invalid_observation_breaks_temporal_adjacency():
@@ -363,6 +381,7 @@ def test_evidence_gates_include_exact_threshold_boundaries():
         torso_rotation_deg_s=config.dynamic_torso_rotation_deg_s,
         height_collapse_fraction=config.dynamic_height_collapse_fraction,
         motion_bh_s=STILLNESS_THRESHOLD_BH_S,
+        motion_available=True,
         scale_source="upright_height",
     )
 

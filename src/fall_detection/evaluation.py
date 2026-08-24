@@ -24,9 +24,11 @@ from .fall_fsm import FallAlertKind, FallEvidenceLevel, FallState, PersonFallFSM
 logger = logging.getLogger(__name__)
 
 MANIFEST_SCHEMA_VERSION = 1
-TRACE_SCHEMA_VERSION = 1
+TRACE_SCHEMA_VERSION = 2
+_SUPPORTED_TRACE_SCHEMA_VERSIONS = frozenset((1, TRACE_SCHEMA_VERSION))
 REPLAY_STRATEGIES = ("legacy-and", "relaxed-or", "k-of-n", "temporal-fsm")
 _FEATURE_FIELDS = {field.name for field in dataclasses.fields(FallFeatures)}
+_V1_FEATURE_FIELDS = _FEATURE_FIELDS - {"motion_available"}
 _SHA256_LENGTH = 64
 _EPSILON = 1e-12
 
@@ -47,7 +49,7 @@ class ManifestClip:
     subject: str
     trial: str
     camera: str
-    split: str
+    split: str | None
     duration_s: float
     events: tuple[LabelledEvent, ...]
 
@@ -237,10 +239,9 @@ def load_manifest(path: str | Path) -> EvaluationManifest:
                 "subject",
                 "trial",
                 "camera",
-                "split",
                 "duration_s",
             },
-            optional={"events"},
+            optional={"events", "split"},
             name=name,
         )
         clip_id = _nonempty_string(clip["id"], f"{name}.id")
@@ -254,13 +255,18 @@ def load_manifest(path: str | Path) -> EvaluationManifest:
         subject = _nonempty_string(clip["subject"], f"{name}.subject")
         trial = _nonempty_string(clip["trial"], f"{name}.trial")
         camera = _nonempty_string(clip["camera"], f"{name}.camera")
-        split = _nonempty_string(clip["split"], f"{name}.split")
-        previous_split = subject_splits.setdefault(subject, split)
-        if previous_split != split:
-            raise ValueError(
-                f"subject group {subject!r} leaks across splits "
-                f"{previous_split!r} and {split!r}"
-            )
+        split = (
+            _nonempty_string(clip["split"], f"{name}.split")
+            if "split" in clip
+            else None
+        )
+        if split is not None:
+            previous_split = subject_splits.setdefault(subject, split)
+            if previous_split != split:
+                raise ValueError(
+                    f"subject group {subject!r} leaks across splits "
+                    f"{previous_split!r} and {split!r}"
+                )
         duration_s = _finite_number(
             clip["duration_s"], f"{name}.duration_s", minimum=0.0
         )
@@ -326,6 +332,10 @@ def load_manifest(path: str | Path) -> EvaluationManifest:
             )
         )
 
+    declared_split_count = sum(clip.split is not None for clip in clips)
+    if declared_split_count not in (0, len(clips)):
+        raise ValueError("manifest clips must either all declare split or all omit it")
+
     return EvaluationManifest(
         path=manifest_path.resolve(),
         dataset=dataset,
@@ -352,20 +362,28 @@ def _load_json_line(line: str, path: Path, line_number: int) -> Mapping[str, Any
     return record
 
 
-def _features_from_record(value: object, context: str) -> FallFeatures:
+def _features_from_record(
+    value: object,
+    context: str,
+    schema_version: int,
+) -> FallFeatures:
     if not isinstance(value, dict):
         raise ValueError(f"{context}.features must be an object")
-    if set(value) != _FEATURE_FIELDS:
-        missing = _FEATURE_FIELDS - set(value)
-        unknown = set(value) - _FEATURE_FIELDS
+    expected_fields = (
+        _V1_FEATURE_FIELDS if schema_version == 1 else _FEATURE_FIELDS
+    )
+    if set(value) != expected_fields:
+        missing = expected_fields - set(value)
+        unknown = set(value) - expected_fields
         detail = (
             f"missing {sorted(missing)[0]}"
             if missing
             else f"unknown key {sorted(unknown)[0]}"
         )
         raise ValueError(f"{context}.features {detail}")
-    numeric_names = _FEATURE_FIELDS - {
+    numeric_names = expected_fields - {
         "valid",
+        "motion_available",
         "torso_centroid",
         "furniture_roi",
         "scale_source",
@@ -376,11 +394,20 @@ def _features_from_record(value: object, context: str) -> FallFeatures:
     }
     if type(value["valid"]) is not bool:
         raise ValueError(f"{context}.features.valid must be a boolean")
+    if schema_version == 1:
+        motion_available = False
+    else:
+        if type(value["motion_available"]) is not bool:
+            raise ValueError(
+                f"{context}.features.motion_available must be a boolean"
+            )
+        motion_available = value["motion_available"]
     centroid = value["torso_centroid"]
     if not isinstance(centroid, list) or len(centroid) != 2:
         raise ValueError(f"{context}.features.torso_centroid must be [x, y]")
     parsed.update(
         valid=value["valid"],
+        motion_available=motion_available,
         torso_centroid=(
             _finite_number(centroid[0], f"{context}.features.torso_centroid[0]"),
             _finite_number(centroid[1], f"{context}.features.torso_centroid[1]"),
@@ -417,9 +444,10 @@ def _read_trace(path: str | Path) -> tuple[_TraceClip, ...]:
             raise ValueError(f"blank trace record at {trace_path}:{line_number}")
         record = _load_json_line(line, trace_path, line_number)
         context = f"trace record {line_number}"
+        schema_version = record.get("schema_version")
         if (
-            type(record.get("schema_version")) is not int
-            or record.get("schema_version") != TRACE_SCHEMA_VERSION
+            type(schema_version) is not int
+            or schema_version not in _SUPPORTED_TRACE_SCHEMA_VERSIONS
         ):
             raise ValueError(f"{context} has unsupported schema_version")
         record_type = record.get("record_type")
@@ -471,6 +499,7 @@ def _read_trace(path: str | Path) -> tuple[_TraceClip, ...]:
             if duration_s <= 0.0:
                 raise ValueError(f"{context}.duration_s must be positive")
             headers[clip_id] = {
+                "schema_version": schema_version,
                 "source_sha256": source_sha256,
                 "model_sha256": model_sha256,
                 "fall_config_fingerprint": config_fingerprint,
@@ -506,6 +535,10 @@ def _read_trace(path: str | Path) -> tuple[_TraceClip, ...]:
             )
             if clip_id not in headers:
                 raise ValueError(f"{context} appears before clip header {clip_id!r}")
+            if schema_version != headers[clip_id]["schema_version"]:
+                raise ValueError(
+                    f"{context} schema_version differs from clip header"
+                )
             if source_sha256 != headers[clip_id]["source_sha256"]:
                 raise ValueError(f"{context} source checksum differs from clip header")
             frame_index = record["frame_index"]
@@ -533,7 +566,11 @@ def _read_trace(path: str | Path) -> tuple[_TraceClip, ...]:
             else:
                 if type(person_id) is not int or person_id < 0:
                     raise ValueError(f"{context}.person_id must be a non-negative integer or null")
-                features = _features_from_record(features_value, context)
+                features = _features_from_record(
+                    features_value,
+                    context,
+                    int(schema_version),
+                )
                 if abs(features.t_seconds - t_seconds) > _EPSILON:
                     raise ValueError(f"{context} feature timestamp differs from observation")
             observation_key = (frame_index, person_id)
@@ -692,6 +729,7 @@ def _new_machine(strategy: str, config: FallConfig) -> _TemporalMachine | _VoteM
 def _replay_clip(clip: _TraceClip, strategy: str, config: FallConfig) -> dict[str, object]:
     machines: dict[int, _TemporalMachine | _VoteMachine] = {}
     last_times: dict[int, float] = {}
+    last_observed_times: dict[int, float] = {}
     dwell: defaultdict[str, float] = defaultdict(float)
     incidents: list[_Incident] = []
     active: dict[int, _Incident] = {}
@@ -705,10 +743,16 @@ def _replay_clip(clip: _TraceClip, strategy: str, config: FallConfig) -> dict[st
             for observation in group
             if observation.person_id is not None
         }
-        for person_id, machine in machines.items():
+        for person_id, machine in list(machines.items()):
             previous_at = last_times[person_id]
             dwell[machine.state.name] += max(0.0, t_seconds - previous_at)
             last_times[person_id] = t_seconds
+            if t_seconds - last_observed_times[person_id] > config.identity_timeout_s:
+                del machines[person_id]
+                del last_times[person_id]
+                del last_observed_times[person_id]
+                active.pop(person_id, None)
+                continue
             if person_id not in observed_ids:
                 machine.step(None, t_seconds)
 
@@ -721,6 +765,7 @@ def _replay_clip(clip: _TraceClip, strategy: str, config: FallConfig) -> dict[st
                 machine = _new_machine(strategy, config)
                 machines[person_id] = machine
                 last_times[person_id] = t_seconds
+            last_observed_times[person_id] = t_seconds
             alert_kind, evidence_level, recovered = machine.step(
                 observation.features, t_seconds
             )
@@ -806,10 +851,50 @@ def _ratio(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
 
 
+def _maximum_cardinality_event_matches(
+    events: tuple[LabelledEvent, ...],
+    incidents: list[Mapping[str, object]],
+) -> dict[int, int]:
+    """Match compatible incidents one-to-one without greedy overlap losses."""
+    candidates: dict[int, tuple[int, ...]] = {}
+    for event_index, event in enumerate(events):
+        candidates[event_index] = tuple(
+            incident_index
+            for incident_index, incident in sorted(
+                enumerate(incidents),
+                key=lambda item: (float(item[1]["detected_at"]), item[0]),
+            )
+            if incident["kind"] == event.kind.value
+            and event.onset_s <= float(incident["detected_at"]) <= event.match_end_s
+        )
+
+    incident_owner: dict[int, int] = {}
+    event_match: dict[int, int] = {}
+
+    def augment(event_index: int, visited_incidents: set[int]) -> bool:
+        for incident_index in candidates[event_index]:
+            if incident_index in visited_incidents:
+                continue
+            visited_incidents.add(incident_index)
+            owner = incident_owner.get(incident_index)
+            if owner is not None and not augment(owner, visited_incidents):
+                continue
+            incident_owner[incident_index] = event_index
+            event_match[event_index] = incident_index
+            return True
+        return False
+
+    for event_index in range(len(events)):
+        augment(event_index, set())
+    return event_match
+
+
 def evaluate_manifest(
     path: str | Path,
     strategy: str,
     config: FallConfig | None = None,
+    *,
+    split: str | None = None,
 ) -> dict[str, object]:
     """Validate a manifest and aggregate event metrics from real trace replay."""
     manifest = load_manifest(path)
@@ -832,6 +917,30 @@ def evaluate_manifest(
             f"manifest/trace clip mismatch: missing={missing}, extra={extra}"
         )
 
+    available_splits = sorted(
+        {clip.split for clip in manifest.clips if clip.split is not None}
+    )
+    if split is not None:
+        selected_split = _nonempty_string(split, "split")
+        if selected_split not in available_splits:
+            if not available_splits:
+                raise ValueError("manifest has no declared splits; omit split selection")
+            raise ValueError(
+                f"unknown split {selected_split!r}; expected one of "
+                + ", ".join(available_splits)
+            )
+    elif len(available_splits) > 1:
+        raise ValueError(
+            "manifest contains multiple splits; select one explicitly with split/--split"
+        )
+    else:
+        selected_split = available_splits[0] if available_splits else None
+    selected_clips = tuple(
+        clip
+        for clip in manifest.clips
+        if selected_split is None or clip.split == selected_split
+    )
+
     labelled_count = 0
     detected_count = 0
     true_positive = 0
@@ -843,7 +952,7 @@ def evaluate_manifest(
     dwell: defaultdict[str, float] = defaultdict(float)
     per_clip: list[dict[str, object]] = []
 
-    for manifest_clip in manifest.clips:
+    for manifest_clip in selected_clips:
         replay_clip = replay_clips[manifest_clip.clip_id]
         if replay_clip["source_sha256"] != manifest_clip.source_sha256:
             raise ValueError(
@@ -855,22 +964,12 @@ def evaluate_manifest(
             raise ValueError(f"duration mismatch for clip {manifest_clip.clip_id}")
         incidents = list(replay_clip["incidents"])  # type: ignore[arg-type]
         detected_count += len(incidents)
-        used_incidents: set[int] = set()
+        matches = _maximum_cardinality_event_matches(manifest_clip.events, incidents)
+        used_incidents = set(matches.values())
         clip_event_results: list[dict[str, object]] = []
         for event_index, event in enumerate(manifest_clip.events):
             labelled_count += 1
-            match_index = next(
-                (
-                    index
-                    for index, incident in enumerate(incidents)
-                    if index not in used_incidents
-                    and incident["kind"] == event.kind.value
-                    and float(incident["detected_at"]) + _EPSILON >= event.onset_s
-                    and float(incident["detected_at"])
-                    <= event.match_end_s + _EPSILON
-                ),
-                None,
-            )
+            match_index = matches.get(event_index)
             if match_index is None:
                 missed += 1
                 event_result = {
@@ -887,7 +986,6 @@ def evaluate_manifest(
                     "recovery_time_s": None,
                 }
             else:
-                used_incidents.add(match_index)
                 true_positive += 1
                 incident = incidents[match_index]
                 detected_at = float(incident["detected_at"])
@@ -932,7 +1030,7 @@ def evaluate_manifest(
             }
         )
 
-    total_hours = sum(clip.duration_s for clip in manifest.clips) / 3600.0
+    total_hours = sum(clip.duration_s for clip in selected_clips) / 3600.0
     metrics = {
         "event_sensitivity": _ratio(true_positive, labelled_count),
         "precision": _ratio(true_positive, detected_count),
@@ -952,6 +1050,8 @@ def evaluate_manifest(
         "schema_version": 1,
         "dataset": manifest.dataset,
         "strategy": strategy,
+        "split": selected_split,
+        "available_splits": available_splits,
         "trace_sha256": actual_trace_sha256,
         "model_sha256": replay["model_sha256"],
         "fall_config_fingerprint": replay["fall_config_fingerprint"],
@@ -974,6 +1074,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--strategy", choices=REPLAY_STRATEGIES, required=True)
+    parser.add_argument(
+        "--split",
+        help="evaluate one frozen manifest split (required when multiple exist)",
+    )
     parser.add_argument("--fall-config", type=Path)
     parser.add_argument(
         "--fall-profile", choices=("sensitive", "balanced", "precision")
@@ -986,11 +1090,16 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         config = load_fall_config(args.fall_config, args.fall_profile)
-        report = evaluate_manifest(args.manifest, args.strategy, config)
-    except ValueError as error:
+        report = evaluate_manifest(
+            args.manifest,
+            args.strategy,
+            config,
+            split=args.split,
+        )
+        sys.stdout.write(json.dumps(report, allow_nan=False, sort_keys=True) + "\n")
+    except (OSError, ValueError) as error:
         logger.error("evaluation failed: %s", error)
         return 2
-    sys.stdout.write(json.dumps(report, allow_nan=False, sort_keys=True) + "\n")
     return 0
 
 

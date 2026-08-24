@@ -34,6 +34,7 @@ def _event(*, incident_event="detected") -> FallEvent:
         torso_centroid=(0.45, 0.7),
         furniture_roi=None,
         scale_source="upright_height",
+        motion_available=True,
     )
     evidence = FallEvidence(
         dynamic_torso_angle=True,
@@ -158,6 +159,7 @@ def test_telemetry_record_has_raw_features_gates_and_decision_context():
             "torso_centroid": [0.45, 0.7],
             "furniture_roi": None,
             "scale_source": "upright_height",
+            "motion_available": True,
         },
         "evidence": {
             "dynamic_torso_angle": True,

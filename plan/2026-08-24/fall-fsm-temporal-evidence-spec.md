@@ -65,7 +65,8 @@ For each observation extract:
 - absolute torso rotation rate;
 - bounding-box height collapse from a rolling upright-height baseline;
 - pixel bounding-box width/height ratio;
-- image-space motion magnitude used as stillness evidence;
+- image-space motion magnitude plus an explicit availability flag used as
+  stillness evidence;
 - mean torso landmark visibility and an observation-valid flag;
 - normalized torso centroid and matching furniture ROI, if any.
 
@@ -73,8 +74,10 @@ Motion is expressed in body-heights per second. A rolling median of recent
 upright bounding-box heights is the preferred scale. Before an upright baseline
 exists, the current bounding-box diagonal is the scale and height collapse is
 unavailable. Missing or malformed landmarks produce an invalid observation,
-not an exception or fabricated zero. Adjacent observations separated by more
-than 0.5 seconds do not contribute an evidence interval. Any retained Kalman
+not an exception or fabricated zero. First and post-gap motion derivatives are
+marked unavailable rather than treated as measured stillness. Adjacent
+observations separated by more than 0.5 seconds do not contribute an evidence
+interval. Any retained Kalman
 prediction is capped at 0.5 seconds and is not used as fresh evidence.
 
 MediaPipe world landmarks may remain available for relative anatomical display
@@ -147,11 +150,13 @@ Dynamic evidence is temporal rather than a simultaneous Boolean gate:
 4. Enter `POST_STABILITY_EVALUATION` after a 1.0-second observed-fall window
    has at least 80% observation coverage and meets the profile's strict
    torso-plus-aspect posture fraction, producing `HIGH` evidence. If that
-   normal path fails but all three distinct dynamic cues were latched and the
-   window still has at least 80% observation coverage, allow a `MEDIUM`
+   normal path fails but all three distinct dynamic cues were latched, the
+   window still has at least 80% observation coverage, and torso-OR-aspect
+   support occupies at least half the strict posture fraction, allow a `MEDIUM`
    observed-fall confirmation. If all three cues were latched but observations
    instead disappear before postural confirmation, allow the same `MEDIUM`
-   confirmation at timeout. Otherwise reject at timeout, clear all candidate
+   confirmation at timeout only after at least one valid post-impact sample had
+   torso-or-aspect support. Otherwise reject at timeout, clear all candidate
    evidence, and apply the 0.5-second cooldown. The fallback applies only to an
    observed dynamic fall; persistent-prone detection remains strict
    torso-plus-aspect evidence.
@@ -169,8 +174,9 @@ The continuous-coverage `MEDIUM` fallback and recovery seeds were calibrated
 from committed numerical regression traces, not clip identifiers: clips 1 and
 2 retain normal `HIGH` confirmation, while clips 3 and 4 latch all three
 dynamic cues but reach only 0.266 and 0.0 strict posture fractions. Lowering
-aspect or persistent-posture thresholds would broaden static prone alerts, so
-the dynamic-only fallback is the narrower tradeoff. Balanced replay confirms
+aspect or persistent-posture thresholds would broaden static prone alerts. The
+partial-support guard rejects an all-three-cue impulse that immediately returns
+upright while preserving the trace-backed fallback. Balanced replay confirms
 clips 3 and 4 at 2.166 and 2.200 seconds and closes clip 4 at 2.933 seconds.
 
 No fresh, nonterminal track may remain in a candidate state longer than the
@@ -179,12 +185,15 @@ enough static evidence to recreate the old oscillation loop immediately.
 
 ## Runtime contract
 
-- Identity expiry uses elapsed seconds, not numbers of inference results.
+- Identity expiry uses elapsed seconds, not numbers of inference results, and
+  equals candidate timeout plus maximum observation gap.
 - A new identity is marked seen on its creation observation.
 - Short observation gaps preserve candidate state; invalid intervals do not
   inflate coverage.
-- Incidents survive tracker `forget` and manager runtime reset. An explicit
-  `clear_incidents` operation is the only destructive incident reset.
+- Incidents survive tracker `forget` and manager runtime reset, while unresolved
+  active person-ID bindings are detached so a reused ID can create a new
+  incident. An explicit `clear_incidents` operation is the only destructive
+  incident reset.
 - JSONL telemetry records schema version, timestamps, identity, raw features,
   gate results, evidence duration/fraction/coverage, state before/after,
   observation age, and incident event.
@@ -209,6 +218,9 @@ Commit only numerical feature traces, checksums, manifests, and labels—not
 video files or model bundles. The evaluator accepts TOML manifests for local
 clips and user-supplied UP-Fall, URFD, and Le2i layouts. Splits are grouped by
 subject, trial, and camera so related frames/views never leak across folds.
+Local manifests may omit split from every clip; manifests with multiple
+declared splits require explicit API/CLI filtering and cannot aggregate
+train/test together.
 
 Report event-level sensitivity, precision, false alerts per hour, missed-fall
 rate, alert latency, recovery timing, and state dwell. Support replay
@@ -216,15 +228,18 @@ comparisons for the legacy strict-AND vote, relaxed OR vote, k-of-N vote, and
 the temporal FSM.
 
 Each event label declares `onset_s` and a required `match_end_s` with
-`onset_s < match_end_s <= duration_s`. Only a same-kind incident in that
-association interval is matched; a later incident is a false positive while
-the label remains missed. Repository labels use a two-second post-onset window,
-clamped to clip duration.
+`onset_s < match_end_s <= duration_s`. Only a same-kind incident in that exact
+inclusive association interval is matched. Overlapping windows use
+deterministic maximum-cardinality one-to-one matching; a later incident is a
+false positive while the label remains missed. Repository labels use a
+two-second post-onset window, clamped to clip duration.
 
 Because image evidence depends on `FallConfig`, extraction records a canonical
 exact-config fingerprint (including furniture ROIs) and pose-model SHA-256 in
 every clip header. Replay requires consistent per-trace provenance and the same
-config fingerprint. A trace is complete only when observation records cover
+config fingerprint. Trace schema v2 requires explicit motion availability;
+strict schema-v1 traces remain readable with motion conservatively unavailable.
+A trace is complete only when observation records cover
 every frame index in `0..frame_count-1`; duplicate `(frame_index, person_id)`
 keys, inconsistent same-frame times, nonmonotonic frame times, and times outside
 the clip duration are invalid.
@@ -237,6 +252,8 @@ Repository acceptance fixtures are labelled as follows:
 | `fall_example_2.mp4` | exactly one `OBSERVED_FALL` | absent |
 | `fall_example_3.mp4` | exactly one `OBSERVED_FALL` | absent |
 | `fall_example_4.mp4` | exactly one `OBSERVED_FALL` | present |
+| `sample_1.mp4` | no incident | n/a |
+| `sample_2.mp4` | no incident | n/a |
 
 No-person samples must create no alerts. Unit/integration coverage must include
 rapid sitting, bending, crouching, controlled lying, getting up, variable FPS,
@@ -245,7 +262,7 @@ incident preservation, and every transition edge.
 
 The production release gate, evaluated on held-out deployment-like data, is at
 least 95% event sensitivity, at most 1 false alert per monitored hour, and
-median alert latency at most 2 seconds. The four repository clips are regression
+median alert latency at most 2 seconds. The six repository clips are regression
 fixtures only and cannot establish those production metrics.
 
 ## Primary research sources

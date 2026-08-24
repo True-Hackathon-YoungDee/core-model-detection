@@ -263,6 +263,25 @@ def test_forget_and_default_reset_preserve_incident_history_until_explicit_clear
     assert manager.incidents == ()
 
 
+@pytest.mark.parametrize("boundary", ["forget", "reset"])
+def test_reused_person_id_after_runtime_boundary_creates_a_new_incident(boundary):
+    manager = FallStateManager()
+    _drive_persistent_prone(manager, 5, base_t=0.0)
+
+    if boundary == "forget":
+        manager.forget(5)
+    else:
+        manager.reset()
+    later_events = _drive_persistent_prone(manager, 5, base_t=10.0)
+
+    assert later_events[-1].incident_event == "detected"
+    assert tuple(incident.incident_id for incident in manager.incidents) == (
+        "fall-000001",
+        "fall-000002",
+    )
+    assert all(incident.recovered_at is None for incident in manager.incidents)
+
+
 def test_upright_recovery_updates_incident_once_and_emits_recovered_event():
     manager = FallStateManager()
     _drive_observed_fall(manager, 8)

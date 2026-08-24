@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -116,20 +117,20 @@ def _manifest_text(
         f'trace_sha256 = "{trace_sha256}"',
     ]
     for clip in clips:
-        chunks.extend(
-            [
-                "",
-                "[[clips]]",
-                f'id = "{clip["id"]}"',
-                f'source = "video/input/{clip["id"]}.mp4"',
-                f'source_sha256 = "{SOURCE_SHA}"',
-                f'subject = "{clip.get("subject", clip["id"])}"',
-                f'trial = "{clip.get("trial", "trial-1")}"',
-                f'camera = "{clip.get("camera", "camera-1")}"',
-                f'split = "{clip.get("split", "test")}"',
-                f'duration_s = {clip.get("duration_s", 10.0)}',
-            ]
-        )
+        clip_lines = [
+            "",
+            "[[clips]]",
+            f'id = "{clip["id"]}"',
+            f'source = "video/input/{clip["id"]}.mp4"',
+            f'source_sha256 = "{SOURCE_SHA}"',
+            f'subject = "{clip.get("subject", clip["id"])}"',
+            f'trial = "{clip.get("trial", "trial-1")}"',
+            f'camera = "{clip.get("camera", "camera-1")}"',
+        ]
+        if not clip.get("omit_split", False):
+            clip_lines.append(f'split = "{clip.get("split", "test")}"')
+        clip_lines.append(f'duration_s = {clip.get("duration_s", 10.0)}')
+        chunks.extend(clip_lines)
         for event in clip.get("events", []):
             onset_s = event["onset_s"]
             match_end_s = event.get(
@@ -182,6 +183,64 @@ def test_manifest_rejects_subject_group_leakage_across_splits(tmp_path: Path):
         load_manifest(manifest)
 
 
+def test_manifest_without_declared_split_remains_a_valid_local_evaluation(tmp_path: Path):
+    trace = tmp_path / "trace.jsonl"
+    trace_sha = _write_trace(trace, {"clip-a": (1.0, [_observation(0.0)])})
+    manifest_path = tmp_path / "manifest.toml"
+    manifest_path.write_text(
+        _manifest_text(
+            trace.name,
+            trace_sha,
+            [{"id": "clip-a", "duration_s": 1.0, "omit_split": True}],
+        )
+    )
+
+    manifest = load_manifest(manifest_path)
+    report = evaluate_manifest(manifest_path, "temporal-fsm", FallConfig())
+
+    assert manifest.clips[0].split is None
+    assert report["split"] is None
+    assert [clip["clip_id"] for clip in report["clips"]] == ["clip-a"]
+
+
+def test_multi_split_manifest_requires_explicit_split_and_filters_frozen_test(
+    tmp_path: Path,
+):
+    trace = tmp_path / "trace.jsonl"
+    trace_sha = _write_trace(
+        trace,
+        {
+            "clip-train": (1.0, [_observation(0.0)]),
+            "clip-test": (1.0, [_observation(0.0)]),
+        },
+    )
+    manifest_path = tmp_path / "manifest.toml"
+    manifest_path.write_text(
+        _manifest_text(
+            trace.name,
+            trace_sha,
+            [
+                {"id": "clip-train", "split": "train", "duration_s": 1.0},
+                {"id": "clip-test", "split": "test", "duration_s": 1.0},
+            ],
+        )
+    )
+
+    with pytest.raises(ValueError, match="multiple splits.*select"):
+        evaluate_manifest(manifest_path, "temporal-fsm", FallConfig())
+
+    report = evaluate_manifest(
+        manifest_path,
+        "temporal-fsm",
+        FallConfig(),
+        split="test",
+    )
+
+    assert report["split"] == "test"
+    assert report["available_splits"] == ["test", "train"]
+    assert [clip["clip_id"] for clip in report["clips"]] == ["clip-test"]
+
+
 def test_manifest_rejects_boolean_schema_version(tmp_path: Path):
     trace = tmp_path / "trace.jsonl"
     trace_sha = _write_trace(trace, {"clip-a": (1.0, [])})
@@ -202,6 +261,37 @@ def test_trace_rejects_boolean_schema_version(tmp_path: Path):
     trace.write_text(trace.read_text().replace('"schema_version": 1', '"schema_version": true'))
 
     with pytest.raises(ValueError, match="schema_version"):
+        replay_trace(trace, "temporal-fsm", FallConfig())
+
+
+def test_v1_trace_motion_is_conservatively_unavailable_to_legacy_stillness(
+    tmp_path: Path,
+):
+    trace = tmp_path / "trace.jsonl"
+    observation = _observation(0.0, downward_speed=1.0)
+    observation["features"] = _features(0.0, downward_speed=1.0) | {
+        "torso_angle_deg": 70.0,
+        "bbox_aspect_ratio": 1.5,
+        "torso_rotation_deg_s": 90.0,
+        "height_collapse_fraction": 0.5,
+        "motion_bh_s": 0.0,
+    }
+    _write_trace(trace, {"clip-a": (1.0, [observation])})
+
+    replay = replay_trace(trace, "legacy-and", FallConfig())
+
+    assert replay["clips"][0]["incidents"] == []
+
+
+def test_v2_trace_requires_explicit_boolean_motion_availability(tmp_path: Path):
+    trace = tmp_path / "trace.jsonl"
+    _write_trace(trace, {"clip-a": (1.0, [_observation(0.0)])})
+    records = [json.loads(line) for line in trace.read_text().splitlines()]
+    for record in records:
+        record["schema_version"] = 2
+    trace.write_text("".join(json.dumps(record) + "\n" for record in records))
+
+    with pytest.raises(ValueError, match="missing motion_available"):
         replay_trace(trace, "temporal-fsm", FallConfig())
 
 
@@ -492,6 +582,122 @@ def test_same_kind_alert_after_label_match_end_is_a_miss_and_false_positive(
     assert report["events"][0]["matched"] is False
 
 
+def test_event_association_maximizes_one_to_one_matches_for_overlapping_windows(
+    tmp_path: Path,
+):
+    fall_config = FallConfig(recovery_dwell_s=0.1)
+    trace = tmp_path / "trace.jsonl"
+    trace_sha = _write_trace(
+        trace,
+        {
+            "clip-a": (
+                10.0,
+                [
+                    _observation(5.5, downward_speed=1.0),
+                    _observation(5.6),
+                    _observation(5.7),
+                    _observation(9.0, downward_speed=1.0),
+                ],
+            )
+        },
+        fall_config=fall_config,
+    )
+    manifest = tmp_path / "manifest.toml"
+    manifest.write_text(
+        _manifest_text(
+            trace.name,
+            trace_sha,
+            [
+                {
+                    "id": "clip-a",
+                    "events": [
+                        {"onset_s": 0.0, "match_end_s": 10.0},
+                        {"onset_s": 5.0, "match_end_s": 6.0},
+                    ],
+                }
+            ],
+        )
+    )
+
+    report = evaluate_manifest(manifest, "relaxed-or", fall_config)
+
+    assert report["event_counts"] == {
+        "labelled": 2,
+        "detected": 2,
+        "true_positive": 2,
+        "false_positive": 0,
+        "missed": 0,
+    }
+    assert [event["detected_at"] for event in report["events"]] == [9.0, 5.5]
+
+
+def test_event_association_rejects_next_float_after_exact_match_end(tmp_path: Path):
+    detected_at = math.nextafter(3.0, math.inf)
+    trace = tmp_path / "trace.jsonl"
+    trace_sha = _write_trace(
+        trace,
+        {"clip-a": (4.0, [_observation(detected_at, downward_speed=1.0)])},
+    )
+    manifest = tmp_path / "manifest.toml"
+    manifest.write_text(
+        _manifest_text(
+            trace.name,
+            trace_sha,
+            [
+                {
+                    "id": "clip-a",
+                    "duration_s": 4.0,
+                    "events": [
+                        {"onset_s": 1.0, "match_end_s": 3.0},
+                    ],
+                }
+            ],
+        )
+    )
+
+    report = evaluate_manifest(manifest, "relaxed-or", FallConfig())
+
+    assert report["event_counts"]["true_positive"] == 0
+    assert report["event_counts"]["false_positive"] == 1
+
+
+def test_event_association_includes_exact_onset_and_match_end_boundaries(
+    tmp_path: Path,
+):
+    trace = tmp_path / "trace.jsonl"
+    trace_sha = _write_trace(
+        trace,
+        {
+            "clip-onset": (4.0, [_observation(1.0, downward_speed=1.0)]),
+            "clip-end": (4.0, [_observation(3.0, downward_speed=1.0)]),
+        },
+    )
+    manifest = tmp_path / "manifest.toml"
+    manifest.write_text(
+        _manifest_text(
+            trace.name,
+            trace_sha,
+            [
+                {
+                    "id": "clip-onset",
+                    "duration_s": 4.0,
+                    "events": [{"onset_s": 1.0, "match_end_s": 3.0}],
+                },
+                {
+                    "id": "clip-end",
+                    "duration_s": 4.0,
+                    "events": [{"onset_s": 1.0, "match_end_s": 3.0}],
+                },
+            ],
+        )
+    )
+
+    report = evaluate_manifest(manifest, "relaxed-or", FallConfig())
+
+    assert report["event_counts"]["true_positive"] == 2
+    assert report["event_counts"]["false_positive"] == 0
+
+
 def test_replay_rejects_non_finite_feature_values(tmp_path: Path):
     trace = tmp_path / "trace.jsonl"
     trace.write_text(
@@ -641,7 +847,90 @@ def test_console_entry_emits_one_json_document_to_stdout(tmp_path: Path, capsys)
     )
 
 
-def test_committed_local_trace_executes_all_four_labelled_acceptance_events():
+def test_console_entry_exposes_explicit_split_filter(tmp_path: Path, capsys):
+    trace = tmp_path / "trace.jsonl"
+    trace_sha = _write_trace(
+        trace,
+        {
+            "clip-train": (1.0, [_observation(0.0)]),
+            "clip-test": (1.0, [_observation(0.0)]),
+        },
+    )
+    manifest = tmp_path / "manifest.toml"
+    manifest.write_text(
+        _manifest_text(
+            trace.name,
+            trace_sha,
+            [
+                {"id": "clip-train", "split": "train", "duration_s": 1.0},
+                {"id": "clip-test", "split": "test", "duration_s": 1.0},
+            ],
+        )
+    )
+
+    assert evaluation.main(
+        [
+            "--manifest",
+            str(manifest),
+            "--strategy",
+            "temporal-fsm",
+            "--split",
+            "test",
+        ]
+    ) == 0
+
+    assert [clip["clip_id"] for clip in json.loads(capsys.readouterr().out)["clips"]] == [
+        "clip-test"
+    ]
+
+
+def test_console_entry_returns_two_for_routine_evaluation_io_error(
+    monkeypatch, caplog
+):
+    def fail_evaluation(*args, **kwargs):
+        raise OSError("output device unavailable")
+
+    monkeypatch.setattr(evaluation, "evaluate_manifest", fail_evaluation)
+
+    with caplog.at_level("ERROR"):
+        code = evaluation.main(
+            ["--manifest", "manifest.toml", "--strategy", "temporal-fsm"]
+        )
+
+    assert code == 2
+    assert "output device unavailable" in caplog.text
+
+
+def test_replay_state_dwell_stops_at_configured_identity_expiry(tmp_path: Path):
+    fall_config = FallConfig(candidate_timeout_s=1.0, max_observation_gap_s=0.5)
+    trace = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace,
+        {
+            "clip-a": (
+                10.0,
+                [
+                    _observation(0.0),
+                    {"t_seconds": 1.5, "person_id": None, "features": None},
+                    {
+                        "t_seconds": 1.500001,
+                        "person_id": None,
+                        "features": None,
+                    },
+                ],
+            )
+        },
+        fall_config=fall_config,
+    )
+
+    replay = replay_trace(trace, "temporal-fsm", fall_config)
+
+    assert replay["clips"][0]["state_dwell_s"] == {
+        "UPRIGHT": pytest.approx(1.500001)
+    }
+
+
+def test_committed_local_trace_executes_falls_and_zero_event_negative_clips():
     manifest = Path(__file__).parents[1] / "evaluation" / "manifests" / "local-falls.toml"
 
     report = evaluate_manifest(manifest, "temporal-fsm", FallConfig())
@@ -653,16 +942,26 @@ def test_committed_local_trace_executes_all_four_labelled_acceptance_events():
         "false_positive": 0,
         "missed": 0,
     }
-    expected = {
+    expected_falls = {
         "fall-example-1": ("HIGH", 5.754, None),
         "fall-example-2": ("HIGH", 3.366, None),
         "fall-example-3": ("MEDIUM", 2.166, None),
         "fall-example-4": ("MEDIUM", 2.2, 2.933),
     }
+    assert {clip["clip_id"] for clip in report["clips"]} == {
+        *expected_falls,
+        "no-person-sample-1",
+        "no-person-sample-2",
+    }
     for clip in report["clips"]:
+        if clip["clip_id"].startswith("no-person-"):
+            assert clip["incidents"] == []
+            assert clip["event_results"] == []
+            assert clip["false_positives"] == 0
+            continue
         assert len(clip["incidents"]) == 1
         incident = clip["incidents"][0]
-        evidence_level, detected_at, recovered_at = expected[clip["clip_id"]]
+        evidence_level, detected_at, recovered_at = expected_falls[clip["clip_id"]]
         assert incident["kind"] == "OBSERVED_FALL"
         assert incident["evidence_level"] == evidence_level
         assert incident["detected_at"] == pytest.approx(detected_at)

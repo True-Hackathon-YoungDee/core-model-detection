@@ -180,6 +180,11 @@ class FallConfig:
     furniture_occupancy_fraction: float = 0.60
     furniture_rois: tuple[FurnitureROI, ...] = field(default_factory=tuple)
 
+    @property
+    def identity_timeout_s(self) -> float:
+        """Maximum age retained for an FSM candidate's tracking identity."""
+        return self.candidate_timeout_s + self.max_observation_gap_s
+
     def __post_init__(self) -> None:
         try:
             selected_profile = self.profile if isinstance(self.profile, FallProfile) else FallProfile(self.profile)

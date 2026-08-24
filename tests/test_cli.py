@@ -1,5 +1,6 @@
 import importlib
 import logging
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -179,6 +180,48 @@ def test_positive_frame_dimensions_reach_fall_manager(
     assert calls == [(128, 72)]
 
 
+def test_fall_config_candidate_lifetime_reaches_runner_identity_tracker(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "clip.mp4"
+    source.touch()
+    config_path = tmp_path / "fall.toml"
+    config_path.write_text(
+        "[timing]\ncandidate_timeout_s = 1.25\nmax_observation_gap_s = 0.25\n",
+        encoding="utf-8",
+    )
+    runner_kwargs = []
+
+    class RecordingManager:
+        def __init__(self, config):
+            pass
+
+        def update(self, persons, t_seconds, frame_width, frame_height):
+            return []
+
+        def forget(self, person_id):
+            pass
+
+    class RecordingRunner(_CallbackRunner):
+        def __init__(self, config, source, **kwargs):
+            runner_kwargs.append(kwargs)
+            super().__init__(config, source, **kwargs)
+
+    monkeypatch.setattr("fall_detection.fall_state.FallStateManager", RecordingManager)
+    monkeypatch.setattr("fall_detection.runner.VideoFileRunner", RecordingRunner)
+
+    assert main(
+        [
+            "--source",
+            str(source),
+            "--fall-config",
+            str(config_path),
+            "--no-display",
+        ]
+    ) == 0
+    assert runner_kwargs[0]["max_unseen_s"] == pytest.approx(1.5)
+
+
 def test_explicit_body_mass_warns_once_without_changing_fall_config(
     monkeypatch, tmp_path
 ):
@@ -273,3 +316,33 @@ def test_main_rejects_output_flag_with_a_live_source():
     LiveStreamRunner's auto-restart-on-stall loop, so it's file-source only."""
     code = main(["--source", "0", "--output", "out.mp4", "--no-display"])
     assert code == 2
+
+
+def test_main_returns_two_when_jsonl_output_cannot_be_opened(
+    monkeypatch, tmp_path, caplog
+):
+    source = tmp_path / "clip.mp4"
+    source.touch()
+    alert_path = tmp_path / "alerts.jsonl"
+    original_open = Path.open
+
+    def failing_open(path, *args, **kwargs):
+        if path == alert_path:
+            raise OSError("read-only alert destination")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", failing_open)
+
+    with caplog.at_level(logging.ERROR):
+        code = main(
+            [
+                "--source",
+                str(source),
+                "--fall-alert-log",
+                str(alert_path),
+                "--no-display",
+            ]
+        )
+
+    assert code == 2
+    assert "read-only alert destination" in caplog.text

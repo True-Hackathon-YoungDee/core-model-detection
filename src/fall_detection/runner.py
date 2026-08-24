@@ -174,12 +174,14 @@ class PosePipeline:
         smoothing: bool = True,
         best_only: bool = False,
         max_distance: float = 0.15,
+        max_unseen_s: float = 2.5,
         on_person_lost: Callable[[int], None] | None = None,
     ) -> None:
         self.best_only = best_only
         self.smoother = LandmarkSmoother() if smoothing else None
         self.tracker = IdentityTracker(
             max_distance=max_distance,
+            max_unseen_s=max_unseen_s,
             on_lost=self._make_on_lost(on_person_lost),
         )
 
@@ -268,6 +270,7 @@ class VideoFileRunner:
         smoothing: bool = True,
         best_only: bool = False,
         max_frames: int | None = None,
+        max_unseen_s: float = 2.5,
         on_frame: Callable[[list[PersonPose], float, Any], None] | None = None,
         overlay: Callable[[Any, list[PersonPose]], Any] | None = None,
         on_person_lost: Callable[[int], None] | None = None,
@@ -277,7 +280,10 @@ class VideoFileRunner:
         self.path = str(path)
         self.display = Display(display, max_width=display_max_width)
         self.pipeline = PosePipeline(
-            smoothing=smoothing, best_only=best_only, on_person_lost=on_person_lost
+            smoothing=smoothing,
+            best_only=best_only,
+            max_unseen_s=max_unseen_s,
+            on_person_lost=on_person_lost,
         )
         self.max_frames = max_frames
         self.strategy = resolve_strategy(config)
@@ -465,6 +471,7 @@ class LiveStreamRunner:
         stall_timeout: float = 3.0,
         first_result_grace: float = 10.0,
         max_restarts: int = 5,
+        max_unseen_s: float = 2.5,
         on_frame: Callable[[list[PersonPose], float, Any], None] | None = None,
         overlay: Callable[[Any, list[PersonPose]], Any] | None = None,
         on_person_lost: Callable[[int], None] | None = None,
@@ -473,7 +480,10 @@ class LiveStreamRunner:
         self.source = source
         self.display = Display(display, max_width=display_max_width)
         self.pipeline = PosePipeline(
-            smoothing=smoothing, best_only=best_only, on_person_lost=on_person_lost
+            smoothing=smoothing,
+            best_only=best_only,
+            max_unseen_s=max_unseen_s,
+            on_person_lost=on_person_lost,
         )
         self.max_frames = max_frames
         self.stall_timeout = stall_timeout

@@ -21,7 +21,9 @@ vertical, hip and bounding-box downward speed, torso rotation rate, collapse
 against a rolling upright-height median, pixel width/height ratio, image-space
 motion, torso visibility, and normalized torso centroid. Speeds use body
 heights per second. A gap over 0.5 seconds breaks derivative and coverage
-adjacency; invalid observations contribute neither fabricated zeros nor time.
+adjacency. `motion_available=false` distinguishes an unavailable first/post-gap
+derivative from measured zero motion, so unavailable motion cannot satisfy the
+stillness diagnostic or the legacy strict-AND comparator.
 
 ## States, transitions, and incidents
 
@@ -35,23 +37,28 @@ measurement. Public numeric state values remain stable.
 | `DESCENDING` | `IMPACT` | Dynamic torso angle joins the latched candidate before its 2.0 s timeout. |
 | `DESCENDING` | `UPRIGHT` | Candidate times out; evidence clears and a 0.5 s rejection cooldown starts. |
 | `IMPACT` | `SLUMPING` | The next valid observation begins duration-weighted postural accumulation. |
-| `SLUMPING` | `POST_STABILITY_EVALUATION` | Normal observed-fall path: 1.0 s window, at least 0.80 coverage, and profile posture fraction qualifies `HIGH`. Empirical fallback: all three dynamic cues plus the same covered window qualifies `MEDIUM`. Persistent-prone qualification stays strict torso plus aspect and is `HIGH`. |
-| candidate state | `POST_STABILITY_EVALUATION` | If observations disappear and all three cues were latched, timeout may queue `MEDIUM`; otherwise timeout rejects to `UPRIGHT`. |
+| `SLUMPING` | `POST_STABILITY_EVALUATION` | Normal observed-fall path: 1.0 s window, at least 0.80 coverage, and profile posture fraction qualifies `HIGH`. Empirical fallback: all three dynamic cues, the same covered window, and torso-OR-aspect support for at least half the strict posture fraction qualify `MEDIUM`. Persistent-prone qualification stays strict torso plus aspect and is `HIGH`. |
+| candidate state | `POST_STABILITY_EVALUATION` | If observations disappear, all three cues were latched, and at least one valid post-impact sample had torso-or-aspect support, timeout may queue `MEDIUM`; otherwise timeout rejects to `UPRIGHT`. |
 | `POST_STABILITY_EVALUATION` | `FALL_CONFIRMED` / `BED_REST` | The next step creates one incident. A qualifying configured furniture ROI produces `BED_REST`; otherwise the observed/persistent kind is retained. |
 | terminal state | `UPRIGHT` | Sustained, quality-valid torso angle at or below 35° reaches the profile recovery dwell. |
 
 The normal `HIGH` path is always evaluated before the `MEDIUM` fallback.
 Continuous-coverage fallback was selected because local clips 3 and 4 latch all
 three dynamic cues but have strict torso-plus-aspect fractions of 0.266 and
-0.0. Weakening static posture would also weaken persistent-prone specificity.
-This trace-driven rule is a narrower regression calibration, not a universal
-fall model.
+0.0. Requiring partial torso-or-aspect support rejects an all-three-cue impulse
+that immediately returns upright while preserving those two regressions.
+Weakening static posture would also weaken persistent-prone specificity. This
+trace-driven rule is a narrower regression calibration, not a universal fall
+model.
 
 One terminal confirmation creates one durable `FallIncident`. Losing a track
 or resetting runtime trackers does not erase history; only
-`clear_incidents()` does. Recovery adds `recovered_at` to that incident and
-closes active incident metadata. It does not retract or suppress the alert that
-was already emitted. A later fall creates a new identifier.
+`clear_incidents()` does. A loss/reset detaches the unresolved person-ID binding
+so a reused tracker ID can create a later incident; the unresolved historical
+record remains immutable. Recovery adds `recovered_at` to an incident while its
+identity remains active. It does not retract or suppress the alert that was
+already emitted. A later fall creates a new identifier. Identity retention is
+the configured candidate timeout plus maximum observation gap.
 
 ## Profiles and configuration
 
@@ -103,7 +110,8 @@ processing step. Each line contains:
 - `person_id`, `t_seconds`, `previous_state`, `state`, `state_changed`, and
   `observation_age_s`;
 - raw `features`: validity, pixel torso angle/aspect, two downward speeds,
-  rotation, collapse, motion, visibility, centroid, ROI, and scale source;
+  rotation, collapse, motion, explicit motion availability, visibility,
+  centroid, ROI, and scale source;
 - Boolean evidence gates for dynamic torso, downward motion, rotation,
   collapse, strict torso/aspect posture, stillness, and quality;
 - duration-weighted `evidence_fraction`, `coverage_fraction`, elapsed/required
@@ -125,6 +133,10 @@ thresholds, and furniture ROIs. Replay loads configuration with production
 precedence (explicit profile, then file profile, then `balanced`) and rejects a
 different fingerprint with a re-extraction instruction. If an existing trace
 names different source checksums, replacement also requires `--force`.
+Trace schema v2 requires `motion_available`. The reader still accepts strict
+schema-v1 traces and conservatively treats their unlabelled motion derivative
+as unavailable; regenerate v1 traces before comparing the stillness-dependent
+legacy strategy.
 The fingerprint is SHA-256 over compact, key-sorted JSON containing
 `schema_version = 1` and every `FallConfig` dataclass field; enum profiles use
 their string value and ROIs use ordered names and normalized point pairs.
@@ -132,7 +144,7 @@ their string value and ROIs use ordered names and normalized point pairs.
 ```bash
 uv run python scripts/extract_fall_traces.py \
   --manifest evaluation/manifests/local-falls.toml \
-  --output evaluation/traces/local-falls-v1.jsonl \
+  --output evaluation/traces/local-regression-v2.jsonl \
   --source-root /path/to/repository-root \
   --model-path /path/to/pose_landmarker_full.task \
   --fall-profile balanced
@@ -156,12 +168,18 @@ rate, each matched alert latency and its median, detection-to-recovery timing,
 and state dwell. Every label has an explicit `match_end_s`; only a same-kind
 incident detected in the inclusive interval from `onset_s` through
 `match_end_s` is a true positive. A later incident is a false positive and the
-unmatched label is missed. Metrics are event-level, never frame-level.
+unmatched label is missed. Overlapping label windows use deterministic
+maximum-cardinality one-to-one matching; no timestamp tolerance widens either
+boundary. Replay expires disappeared identities at the same configured age as
+the runtime, so state dwell does not extend a stale FSM to clip end. Metrics
+are event-level, never frame-level.
 
 The local balanced-profile regression has four of four labelled
 `OBSERVED_FALL` incidents: clips 1 and 2 are `HIGH`, clips 3 and 4 are
-`MEDIUM`, and only clip 4 recovers. These fixtures guard behavior; they are too
-small and too staged to establish production performance.
+`MEDIUM`, and only clip 4 recovers. The committed trace also contains both
+zero-event `sample_1.mp4` and `sample_2.mp4` negatives, each with zero emitted
+incidents. These fixtures guard behavior; they are too small and too staged to
+establish production performance.
 
 ## Public datasets and leakage-safe splits
 
@@ -169,7 +187,7 @@ Start from `evaluation/manifests/up-fall.example.toml`,
 `urfd.example.toml`, or `le2i.example.toml`. Replace every zero checksum and
 illustrative path/time with values from your licensed local copy. Each clip
 requires a repo-relative source, SHA-256, positive duration, subject, trial,
-camera, split, and zero or more ordered event labels (`kind`, `onset_s`,
+camera, optional split, and zero or more ordered event labels (`kind`, `onset_s`,
 `match_end_s`, and whether recovery is expected). `match_end_s` must be after
 the onset and no later than clip duration; the examples use a two-second
 post-onset association horizon, clamped to the clip end.
@@ -183,7 +201,9 @@ Subject, trial, and camera keys are mandatory. The loader rejects a subject
 assigned to more than one declared split, which keeps all trials, frames, and
 camera views of that person on one side of the evaluation boundary. Allocate
 subjects first, then place all their trials/views in that split; never split
-frames or cameras independently.
+frames or cameras independently. A local manifest may omit `split` from every
+clip. A manifest with multiple declared splits must select one explicitly in
+the API or with `--split`; aggregation across train/test is rejected.
 
 For each populated manifest, extract once and compare all strategies against
 the same immutable trace:
@@ -191,7 +211,7 @@ the same immutable trace:
 ```bash
 for strategy in legacy-and relaxed-or k-of-n temporal-fsm; do
   uv run fall-evaluate --manifest evaluation/manifests/my-dataset.toml \
-    --strategy "$strategy"
+    --strategy "$strategy" --split test
 done
 ```
 

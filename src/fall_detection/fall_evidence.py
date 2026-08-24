@@ -29,6 +29,7 @@ class FallFeatures:
     torso_centroid: tuple[float, float]
     furniture_roi: str | None
     scale_source: str
+    motion_available: bool = False
 
 
 @dataclass(frozen=True)
@@ -191,6 +192,7 @@ class ImageEvidenceExtractor:
         bbox_downward_speed = 0.0
         torso_rotation = 0.0
         motion = 0.0
+        motion_available = False
         previous = self._previous
         if previous is not None:
             dt = timestamp - previous.t_seconds
@@ -198,6 +200,7 @@ class ImageEvidenceExtractor:
                 width == previous.frame_width and height == previous.frame_height
             )
             if 0.0 < dt <= self.config.max_observation_gap_s and same_dimensions:
+                motion_available = True
                 hip_downward_speed = (current.hip_center_y - previous.hip_center_y) / dt / scale
                 bbox_downward_speed = (
                     current.bbox_center_y - previous.bbox_center_y
@@ -241,6 +244,7 @@ class ImageEvidenceExtractor:
             torso_centroid=torso_centroid,
             furniture_roi=matching_roi,
             scale_source=scale_source,
+            motion_available=motion_available,
         )
 
     def _prune_upright_heights(self, t_seconds: float) -> None:
@@ -275,7 +279,9 @@ def classify_evidence(features: FallFeatures, config: FallConfig) -> FallEvidenc
         and features.torso_angle_deg >= config.posture_torso_angle_deg,
         posture_aspect=quality_ok
         and features.bbox_aspect_ratio >= config.posture_aspect_ratio,
-        stillness=quality_ok and features.motion_bh_s <= STILLNESS_THRESHOLD_BH_S,
+        stillness=quality_ok
+        and features.motion_available
+        and features.motion_bh_s <= STILLNESS_THRESHOLD_BH_S,
         quality_ok=quality_ok,
     )
 
@@ -329,4 +335,5 @@ def _invalid_features(t_seconds: float, visibility_quality: float) -> FallFeatur
         torso_centroid=(0.0, 0.0),
         furniture_roi=None,
         scale_source="unavailable",
+        motion_available=False,
     )

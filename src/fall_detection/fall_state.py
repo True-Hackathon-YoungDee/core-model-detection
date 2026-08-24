@@ -163,9 +163,11 @@ class FallStateManager:
 
     def forget(self, person_id: int) -> None:
         self._trackers.pop(person_id, None)
+        self._active_incidents.pop(person_id, None)
 
     def reset(self, preserve_incidents: bool = True) -> None:
         self._trackers.clear()
+        self._active_incidents.clear()
         if not preserve_incidents:
             self.clear_incidents()
 

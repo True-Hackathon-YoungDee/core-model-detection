@@ -1,7 +1,7 @@
 schema_version = 1
 dataset = "local-falls"
-trace = "../traces/local-falls-v1.jsonl"
-trace_sha256 = "0494a482141be628212a17a773fd2bb311f04d33880a42de76b050fef0995736"
+trace = "../traces/local-regression-v2.jsonl"
+trace_sha256 = "d666a6e2906b5e69d8ead0f0c108655cf827060a045223c03746d9878626e331"
 
 [[clips]]
 id = "fall-example-1"
@@ -66,3 +66,23 @@ kind = "OBSERVED_FALL"
 onset_s = 0.866
 match_end_s = 2.866
 recovered = true
+
+[[clips]]
+id = "no-person-sample-1"
+source = "video/input/sample_1.mp4"
+source_sha256 = "3594ac93e2e91f087cd6f9b30f1b81db6fadd8609f9530542c3a24f4b84409ce"
+subject = "local-negative-1"
+trial = "no-person-trial-1"
+camera = "camera-1"
+split = "regression"
+duration_s = 13.3133
+
+[[clips]]
+id = "no-person-sample-2"
+source = "video/input/sample_2.mp4"
+source_sha256 = "6e1d683330d3cb1861a83a07208609d97abb25c1fec5bf17d134a28c513736aa"
+subject = "local-negative-2"
+trial = "no-person-trial-2"
+camera = "camera-1"
+split = "regression"
+duration_s = 13.859154929577465
