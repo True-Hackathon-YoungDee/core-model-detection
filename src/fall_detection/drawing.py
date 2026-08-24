@@ -64,7 +64,13 @@ def annotate(
     return canvas
 
 
-def annotate_fall_state(canvas: np.ndarray, events: Sequence[FallEvent]) -> np.ndarray:
+def annotate_fall_state(
+    canvas: np.ndarray,
+    events: Sequence[FallEvent],
+    *,
+    debug: bool = False,
+    additional_observation_age_s: float = 0.0,
+) -> np.ndarray:
     """Draw a per-person fall-state list and, on any confirmed event, a banner.
 
     Called after :func:`annotate` on the same canvas it returned -- additive,
@@ -77,6 +83,24 @@ def annotate_fall_state(canvas: np.ndarray, events: Sequence[FallEvent]) -> np.n
     for event in events:
         color = _ALERT_COLOR if event.state in _ALERT_STATES else (255, 255, 255)
         label = f"#{event.person_id} {event.state.name}"
+        if debug:
+            incident = event.incident
+            kind = event.alert_kind or (incident.kind if incident is not None else None)
+            level = event.evidence_level or (
+                incident.evidence_level if incident is not None else None
+            )
+            stale_age_s = max(
+                0.0,
+                event.observation_age_s + additional_observation_age_s,
+            )
+            label += (
+                f" {kind.value if kind is not None else '-'}"
+                f"/{level.value if level is not None else '-'}"
+                f" ev={event.evidence_fraction:.0%}"
+                f" {event.evidence_elapsed_s:.1f}/{event.evidence_required_s:.1f}s"
+                f" cov={event.coverage_fraction:.0%}"
+                f" stale={stale_age_s:.1f}s"
+            )
         cv2.putText(canvas, label, (10, y), _FONT, 0.6, color, 2, cv2.LINE_AA)
         y += 24
 
