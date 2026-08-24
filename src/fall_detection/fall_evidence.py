@@ -302,14 +302,14 @@ def _torso_visibility(torso: tuple[Any, Any, Any, Any] | None) -> float:
 def _finite_xy(landmark: Any) -> bool:
     try:
         return math.isfinite(float(landmark.x)) and math.isfinite(float(landmark.y))
-    except (AttributeError, TypeError, ValueError):
+    except (AttributeError, OverflowError, TypeError, ValueError):
         return False
 
 
 def _finite_or_zero(value: object) -> float:
     try:
         result = float(value)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return 0.0
     return result if math.isfinite(result) else 0.0
 

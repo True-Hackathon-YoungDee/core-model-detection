@@ -138,6 +138,36 @@ def test_malformed_or_low_quality_landmarks_return_invalid_finite_features(perso
     assert all(math.isfinite(value) for value in numeric_values)
 
 
+def test_oversized_integer_landmarks_return_invalid_finite_features_without_evidence():
+    oversized = 10**10000
+    person = dataclasses.replace(
+        make_person(),
+        landmarks=[make_landmark(oversized, 0.5) for _ in range(NUM_LANDMARKS)],
+    )
+    config = FallConfig()
+
+    features = ImageEvidenceExtractor(config).update(person, 0.0, 1280, 720)
+    evidence = classify_evidence(features, config)
+
+    assert not features.valid
+    assert all(
+        math.isfinite(value)
+        for value in (
+            features.t_seconds,
+            features.torso_angle_deg,
+            features.bbox_aspect_ratio,
+            features.hip_downward_speed_bh_s,
+            features.bbox_downward_speed_bh_s,
+            features.torso_rotation_deg_s,
+            features.height_collapse_fraction,
+            features.motion_bh_s,
+            features.visibility_quality,
+            *features.torso_centroid,
+        )
+    )
+    assert not any(dataclasses.astuple(evidence))
+
+
 def test_pixel_temporal_derivatives_use_upright_body_height_scale():
     extractor = ImageEvidenceExtractor(FallConfig())
     upright = _pixel_person(
