@@ -16,6 +16,7 @@ ids come from :mod:`fall_detection.tracking`.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import platform
 from dataclasses import dataclass, field
@@ -205,6 +206,7 @@ class PoseDetector:
         self.running_mode = running_mode
         self._last_timestamp_ms = -1
         self._limiter = RateLimiter(1.0)
+        self._first_detect_pending = True
 
         if running_mode is RunningMode.LIVE_STREAM and result_callback is None:
             raise ValueError("LIVE_STREAM mode requires a result_callback")
@@ -283,20 +285,32 @@ class PoseDetector:
         self._last_timestamp_ms = timestamp_ms
         return timestamp_ms
 
+    def _first_call_ctx(self):
+        """The graph logs its NORM_RECT/IMAGE_DIMENSIONS warning once, on the
+        first detect call after creation -- not per frame -- so only that one
+        call needs its stderr swallowed."""
+        if self._first_detect_pending:
+            self._first_detect_pending = False
+            return suppress_native_stderr()
+        return contextlib.nullcontext()
+
     def detect_image(self, bgr_frame: np.ndarray):
         """Blocking single-frame detection (IMAGE mode)."""
-        return self._landmarker.detect(self._to_mp_image(bgr_frame))
+        with self._first_call_ctx():
+            return self._landmarker.detect(self._to_mp_image(bgr_frame))
 
     def detect_video(self, bgr_frame: np.ndarray, timestamp_ms: int):
         """Blocking detection for decoded video frames (VIDEO mode)."""
-        return self._landmarker.detect_for_video(
-            self._to_mp_image(bgr_frame), self._monotonic(timestamp_ms)
-        )
+        with self._first_call_ctx():
+            return self._landmarker.detect_for_video(
+                self._to_mp_image(bgr_frame), self._monotonic(timestamp_ms)
+            )
 
     def detect_async(self, bgr_frame: np.ndarray, timestamp_ms: int) -> int:
         """Non-blocking submit (LIVE_STREAM mode); results reach the callback."""
         timestamp_ms = self._monotonic(timestamp_ms)
-        self._landmarker.detect_async(self._to_mp_image(bgr_frame), timestamp_ms)
+        with self._first_call_ctx():
+            self._landmarker.detect_async(self._to_mp_image(bgr_frame), timestamp_ms)
         return timestamp_ms
 
     def close(self) -> None:

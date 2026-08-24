@@ -20,11 +20,37 @@ DATE_FORMAT = "%H:%M:%S"
 
 _configured = False
 
+# cv2's bundled Qt (highgui) ships without a Wayland platform plugin and
+# without its own fonts -- checked in this order for a real system font dir.
+_LINUX_FONT_DIR_CANDIDATES = ("/usr/share/fonts", "/usr/local/share/fonts")
+
 
 def quiet_native_logs() -> None:
-    """Suppress MediaPipe/TensorFlow C++ chatter. Safe to call repeatedly."""
+    """Suppress MediaPipe/TensorFlow/Qt C++ chatter. Safe to call repeatedly."""
     os.environ.setdefault("GLOG_minloglevel", "2")
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    if sys.platform.startswith("linux"):
+        # cv2's Qt has no Wayland plugin, so it always ends up on xcb (via
+        # XWayland) anyway -- set it explicitly for clarity.
+        os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+        # Qt's GNOME/Wayland bootstrap check prints "Ignoring
+        # XDG_SESSION_TYPE=wayland on Gnome" unconditionally to stderr,
+        # *before* its logging-category system (and QT_LOGGING_RULES) is
+        # even initialised -- confirmed via `strings` on the bundled
+        # libQt5Gui and by testing that QT_LOGGING_RULES alone doesn't
+        # silence it. Since we're on xcb/XWayland regardless, tell it we're
+        # x11 to begin with and it skips the check. Process-local only --
+        # does not touch the real desktop session.
+        if os.environ.get("XDG_SESSION_TYPE") == "wayland":
+            os.environ["XDG_SESSION_TYPE"] = "x11"
+        # The QFontDatabase "cannot find font directory" warning ignores
+        # QT_QPA_FONTDIR (set below) and prints regardless -- it's a
+        # category-based qCWarning, so this does catch it.
+        os.environ.setdefault("QT_LOGGING_RULES", "*.warning=false")
+        for font_dir in _LINUX_FONT_DIR_CANDIDATES:
+            if os.path.isdir(font_dir):
+                os.environ.setdefault("QT_QPA_FONTDIR", font_dir)
+                break
 
 
 def setup_logging(
