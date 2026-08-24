@@ -188,6 +188,48 @@ def test_reset_clears_state_and_buffer():
     assert state == FallState.UPRIGHT
 
 
+def test_already_prone_subject_leaves_upright_without_velocity_trigger():
+    """A subject who is prone from frame 1 (e.g. video opens on someone
+    already down) never has a velocity spike, so the FSM must still leave
+    UPRIGHT based on sustained static geometry (torso angle + aspect ratio)."""
+    fsm = PersonFallFSM()
+    dt = 1.0 / 30.0
+    thresholds = FallThresholds()
+    state = FallState.UPRIGHT
+    t = 0.0
+    for i in range(thresholds.static_prone_frames):
+        t = i * dt
+        state = fsm.step(
+            _features(t_seconds=t, downward_speed=0.0, torso_angle=80.0, aspect_ratio=2.5, com_height=0.1)
+        )
+    assert state == FallState.SLUMPING
+
+    for _ in range(35):
+        t += dt
+        state = fsm.step(_features(t_seconds=t, torso_angle=80.0, aspect_ratio=2.5, com_height=0.1))
+        if state == FallState.POST_STABILITY_EVALUATION:
+            break
+    assert state == FallState.POST_STABILITY_EVALUATION
+
+    t += dt
+    state = fsm.step(_features(t_seconds=t, torso_angle=80.0, aspect_ratio=2.5, com_height=0.1))
+    assert state == FallState.FALL_CONFIRMED
+
+
+def test_brief_prone_glimpse_does_not_leave_upright():
+    """A momentary prone-shaped read (occlusion glitch, bending over) that
+    doesn't sustain for static_prone_frames should not trip the static path."""
+    fsm = PersonFallFSM()
+    dt = 1.0 / 30.0
+    thresholds = FallThresholds()
+    state = FallState.UPRIGHT
+    for i in range(thresholds.static_prone_frames - 1):
+        state = fsm.step(
+            _features(t_seconds=i * dt, downward_speed=0.0, torso_angle=80.0, aspect_ratio=2.5, com_height=0.1)
+        )
+    assert state == FallState.UPRIGHT
+
+
 def test_vote_fraction_reflects_buffer_contents_during_slumping():
     fsm = PersonFallFSM()
     dt = 1.0 / 30.0

@@ -57,6 +57,7 @@ class FallThresholds:
     slump_displacement_m: float = 0.30
     dissipation_threshold_w: float = 150.0
     descending_dwell_timeout_s: float = 2.0
+    static_prone_frames: int = 15
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,7 @@ class PersonFallFSM:
     state: FallState = FallState.UPRIGHT
     _buffer: deque = field(default_factory=deque, repr=False)
     _descending_since: float | None = field(default=None, repr=False)
+    _static_prone_streak: int = field(default=0, repr=False)
 
     def step(
         self, features: FallFeatures, discriminators: DiscriminatorFlags | None = None
@@ -108,10 +110,19 @@ class PersonFallFSM:
         downward_speed = float(features.com_velocity[1])
         accel_magnitude = float(np.linalg.norm(features.com_acceleration))
 
+        is_prone_pose = (
+            features.torso_angle_deg > thresholds.theta_threshold
+            and features.bbox_aspect_ratio > thresholds.aspect_ratio_threshold
+        )
+        self._static_prone_streak = self._static_prone_streak + 1 if is_prone_pose else 0
+
         if self.state == FallState.UPRIGHT:
             if downward_speed > thresholds.v_trigger:
                 self.state = FallState.DESCENDING
                 self._descending_since = features.t_seconds
+            elif self._static_prone_streak >= thresholds.static_prone_frames:
+                self.state = FallState.SLUMPING
+                self._buffer.clear()
 
         elif self.state == FallState.DESCENDING:
             slump_path = (
@@ -153,6 +164,7 @@ class PersonFallFSM:
         self.state = FallState.UPRIGHT
         self._buffer.clear()
         self._descending_since = None
+        self._static_prone_streak = 0
 
     @property
     def vote_fraction(self) -> float:

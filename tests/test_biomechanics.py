@@ -85,3 +85,17 @@ def test_floor_estimator_locks_onto_standing_ankle_height_then_reports_zero_at_c
 def test_floor_estimator_uncalibrated_reports_unknown_not_zero():
     estimator = FloorEstimator()
     assert estimator.height_above_floor(world_y=0.0) == float("inf")
+
+
+def test_floor_estimator_never_upright_falls_back_to_observed_ankle_depth():
+    """A person prone from frame 1 never satisfies the upright gate, so
+    _floor_y is never set -- height_above_floor must still return a finite
+    estimate (from observed ankle depth), not +inf forever."""
+    estimator = FloorEstimator()
+    prone_ankle_y = 0.05  # near the hip-centered origin, torso is horizontal
+    for _ in range(10):
+        estimator.update(ankle_world_y=prone_ankle_y, torso_angle_deg=80.0)
+
+    height = estimator.height_above_floor(world_y=0.0)
+    assert height != float("inf")
+    assert height == pytest.approx(prone_ankle_y, abs=0.05)

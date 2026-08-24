@@ -189,8 +189,10 @@ class FloorEstimator:
     def __init__(self, decay: float = 0.98) -> None:
         self.decay = decay
         self._floor_y: float | None = None
+        self._max_ankle_y: float | None = None
 
     def update(self, ankle_world_y: float, torso_angle_deg: float, upright_gate_deg: float = 30.0) -> float | None:
+        self._max_ankle_y = max(self._max_ankle_y, ankle_world_y) if self._max_ankle_y is not None else ankle_world_y
         if torso_angle_deg <= upright_gate_deg:
             if self._floor_y is None:
                 self._floor_y = ankle_world_y
@@ -199,9 +201,11 @@ class FloorEstimator:
         return self._floor_y
 
     def height_above_floor(self, world_y: float) -> float:
-        """Distance above the floor. Returns +inf when the floor is unknown --
-        conservative, so ground-bound checks never fire against an uncalibrated
-        estimator."""
-        if self._floor_y is None:
+        """Distance above the floor. Falls back to the deepest observed ankle
+        position when the subject has never been upright (so a person prone
+        from frame 1 still gets a usable estimate). Returns +inf only when no
+        frame has been observed at all."""
+        effective_floor = self._floor_y if self._floor_y is not None else self._max_ankle_y
+        if effective_floor is None:
             return float("inf")
-        return self._floor_y - world_y
+        return effective_floor - world_y
