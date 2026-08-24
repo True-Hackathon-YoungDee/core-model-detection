@@ -36,8 +36,10 @@ def test_format_alert_wraps_versioned_incident_record():
     assert json.loads(line) == {
         "schema_version": 1,
         "incident_id": "fall-000001",
+        "original_person_id": 2,
         "event": "detected",
         "person_id": 2,
+        "terminal_state": "FALL_CONFIRMED",
         "state": "FALL_CONFIRMED",
         "t_seconds": 1.0,
         "kind": "PERSISTENT_PRONE",

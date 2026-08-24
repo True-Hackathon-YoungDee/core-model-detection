@@ -24,8 +24,10 @@ def event_record(
     return {
         "schema_version": SCHEMA_VERSION,
         "incident_id": incident.incident_id,
+        "original_person_id": incident.original_person_id,
         "event": event_type,
         "person_id": event.person_id,
+        "terminal_state": incident.terminal_state.name,
         "state": event.state.name,
         "t_seconds": event.t_seconds,
         "kind": incident.kind.value,

@@ -60,7 +60,7 @@ def _event(*, incident_event="detected") -> FallEvent:
     )
     incident = FallIncident(
         incident_id="fall-000007",
-        original_person_id=4,
+        original_person_id=40,
         kind=FallAlertKind.OBSERVED_FALL,
         evidence_level=FallEvidenceLevel.HIGH,
         terminal_state=FallState.FALL_CONFIRMED,
@@ -93,8 +93,10 @@ def test_detected_incident_record_has_literal_schema():
     assert record == {
         "schema_version": 1,
         "incident_id": "fall-000007",
+        "original_person_id": 40,
         "event": "detected",
         "person_id": 4,
+        "terminal_state": "FALL_CONFIRMED",
         "state": "FALL_CONFIRMED",
         "t_seconds": 12.5,
         "kind": "OBSERVED_FALL",
@@ -119,8 +121,10 @@ def test_recovered_incident_record_has_literal_schema():
     assert record == {
         "schema_version": 1,
         "incident_id": "fall-000007",
+        "original_person_id": 40,
         "event": "recovered",
         "person_id": 4,
+        "terminal_state": "FALL_CONFIRMED",
         "state": "UPRIGHT",
         "t_seconds": 20.0,
         "kind": "OBSERVED_FALL",
