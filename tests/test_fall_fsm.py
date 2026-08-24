@@ -136,6 +136,22 @@ def test_dynamic_torso_angle_advances_descending_to_evidence_peak():
     assert decision.state is FallState.IMPACT
 
 
+def test_dynamic_torso_angle_after_cue_window_still_advances_latched_candidate():
+    fsm = PersonFallFSM(FallConfig())
+    fsm.step(
+        _features(
+            0.0,
+            downward_speed_bh_s=0.6,
+            torso_rotation_deg_s=61.0,
+        )
+    )
+
+    decision = fsm.step(_features(1.0, torso_angle_deg=45.0))
+
+    assert decision.previous_state is FallState.DESCENDING
+    assert decision.state is FallState.IMPACT
+
+
 def test_candidate_timeout_rejects_and_enforces_cooldown():
     fsm = PersonFallFSM(FallConfig())
     fsm.step(
@@ -452,6 +468,60 @@ def test_prone_from_first_observation_emits_persistent_prone_after_dwell():
     assert alert.state is FallState.FALL_CONFIRMED
     assert alert.alert_kind is FallAlertKind.PERSISTENT_PRONE
     assert alert.evidence_level is FallEvidenceLevel.HIGH
+
+
+def test_persistent_prone_freezes_bed_rest_at_exact_occupancy_boundary():
+    bed = FurnitureROI(
+        "bed",
+        ((0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)),
+    )
+    fsm = PersonFallFSM(FallConfig(furniture_rois=(bed,)))
+    observations = (
+        (0.0, "bed"),
+        (0.5, "bed"),
+        (1.0, "bed"),
+        (1.2, None),
+        (1.5, None),
+        (2.0, None),
+    )
+    for t_seconds, furniture_roi in observations:
+        qualification = fsm.step(_prone(t_seconds, furniture_roi=furniture_roi))
+
+    evaluation = fsm.step(_prone(2.5))
+    alert = fsm.step(_prone(2.6))
+
+    assert qualification.state is FallState.SLUMPING
+    assert qualification.evidence_elapsed_s == pytest.approx(2.0)
+    assert evaluation.state is FallState.POST_STABILITY_EVALUATION
+    assert alert.state is FallState.BED_REST
+    assert alert.alert_kind is FallAlertKind.BED_REST
+
+
+def test_persistent_prone_freezes_non_furniture_kind_below_occupancy_boundary():
+    bed = FurnitureROI(
+        "bed",
+        ((0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)),
+    )
+    fsm = PersonFallFSM(FallConfig(furniture_rois=(bed,)))
+    observations = (
+        (0.0, "bed"),
+        (0.5, "bed"),
+        (1.0, "bed"),
+        (1.199, None),
+        (1.5, None),
+        (2.0, "bed"),
+    )
+    for t_seconds, furniture_roi in observations:
+        qualification = fsm.step(_prone(t_seconds, furniture_roi=furniture_roi))
+
+    evaluation = fsm.step(_prone(2.5, furniture_roi="bed"))
+    alert = fsm.step(_prone(2.6, furniture_roi="bed"))
+
+    assert qualification.state is FallState.SLUMPING
+    assert qualification.evidence_elapsed_s == pytest.approx(2.0)
+    assert evaluation.state is FallState.POST_STABILITY_EVALUATION
+    assert alert.state is FallState.FALL_CONFIRMED
+    assert alert.alert_kind is FallAlertKind.PERSISTENT_PRONE
 
 
 def test_brief_prone_pose_does_not_trigger_persistent_prone():

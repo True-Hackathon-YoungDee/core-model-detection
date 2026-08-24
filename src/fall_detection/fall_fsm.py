@@ -142,6 +142,7 @@ class PersonFallFSM:
         self._active_evidence_level: FallEvidenceLevel | None = None
         self._evidence_required_s = config.persistent_prone_dwell_s
         self._qualified_metrics: tuple[float, float, float] | None = None
+        self._qualified_persistent_alert_kind: FallAlertKind | None = None
         self._alert_metrics: tuple[float, float, float] | None = None
         self._alert_evidence_required_s: float | None = None
         self._recovery_last_at: float | None = None
@@ -177,7 +178,7 @@ class PersonFallFSM:
                 self._latch_dynamic_cues(t_seconds, evidence)
                 if len(self._dynamic_cue_times) == 3:
                     self._all_dynamic_cues_seen = True
-                if evidence.dynamic_torso_angle and len(self._dynamic_cue_times) >= 2:
+                if evidence.dynamic_torso_angle:
                     self.state = FallState.IMPACT
         elif self.state is FallState.IMPACT:
             if self._candidate_timed_out(t_seconds):
@@ -200,7 +201,8 @@ class PersonFallFSM:
             )
             if self._candidate_alert_kind is FallAlertKind.PERSISTENT_PRONE:
                 self._queue_evaluation(
-                    self._qualified_alert_kind(FallAlertKind.PERSISTENT_PRONE),
+                    self._qualified_persistent_alert_kind
+                    or FallAlertKind.PERSISTENT_PRONE,
                     FallEvidenceLevel.HIGH,
                     t_seconds,
                     metrics=self._qualified_metrics,
@@ -277,6 +279,7 @@ class PersonFallFSM:
         self._active_evidence_level = None
         self._evidence_required_s = self.config.persistent_prone_dwell_s
         self._qualified_metrics = None
+        self._qualified_persistent_alert_kind = None
         self._alert_metrics = None
         self._alert_evidence_required_s = None
         self._clear_recovery()
@@ -307,6 +310,7 @@ class PersonFallFSM:
         self._pending_evidence_level = None
         self._evidence_required_s = self.config.persistent_prone_dwell_s
         self._qualified_metrics = None
+        self._qualified_persistent_alert_kind = None
         self._alert_metrics = None
         self._alert_evidence_required_s = None
 
@@ -332,6 +336,9 @@ class PersonFallFSM:
             self._all_dynamic_cues_seen = False
             self._evidence_required_s = self.config.persistent_prone_dwell_s
             self._qualified_metrics = self._posture.metrics(t_seconds)
+            self._qualified_persistent_alert_kind = self._qualified_alert_kind(
+                FallAlertKind.PERSISTENT_PRONE
+            )
             return
 
         _, _, elapsed_s = self._posture.metrics(t_seconds)
@@ -391,6 +398,7 @@ class PersonFallFSM:
         self._active_evidence_level = evidence_level
         self._candidate_alert_kind = None
         self._qualified_metrics = None
+        self._qualified_persistent_alert_kind = None
         self._pending_alert_kind = None
         self._pending_evidence_level = None
         return alert_kind, evidence_level
@@ -431,6 +439,7 @@ class PersonFallFSM:
         self._pending_evidence_level = None
         self._posture.clear()
         self._evidence_required_s = self.config.persistent_prone_dwell_s
+        self._qualified_persistent_alert_kind = None
         self._clear_recovery()
         return True
 
