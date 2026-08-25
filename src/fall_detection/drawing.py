@@ -10,7 +10,7 @@ import numpy as np
 from mediapipe.tasks.python import vision
 
 from .fall_fsm import FallState
-from .fall_state import FallEvent
+from .domain.events import FallEvent
 from .pose import POSE_CONNECTIONS, PersonPose
 
 logger = logging.getLogger(__name__)

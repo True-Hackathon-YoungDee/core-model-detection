@@ -6,7 +6,7 @@ import json
 from dataclasses import asdict
 from typing import Literal, TextIO
 
-from .fall_state import FallEvent
+from .domain.events import FallEvent
 
 SCHEMA_VERSION = 1
 
