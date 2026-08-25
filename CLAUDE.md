@@ -32,6 +32,6 @@ The `fall-detection` console script points at `fall_detection:main` (in `__init_
 
 No `print()` anywhere in the package by design — use `logger = logging.getLogger(__name__)` per module, matching the existing convention in every file.
 
-## Stale doc
+## CLI output
 
-README.md still says "Fall heuristics are not here yet" — that's outdated. The fall-detection layer (`biomechanics.py`, `kalman.py`, `discriminators.py`, `fall_fsm.py`, `fall_state.py`, `geometry.py`) already exists on top of the pose core. Don't take the README's framing at face value; the module list there is behind the code.
+`--output <path>` writes annotated frames to a video file (file sources only, rejected for live sources). Frame annotation only happens when display or output writer is enabled.
