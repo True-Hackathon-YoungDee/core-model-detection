@@ -200,6 +200,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     # Imported after logging is configured so the native log level takes effect.
+    from .adapters.event_sink import CallableEventSink
+    from .application.fall_events import FallEventService
     from .drawing import annotate_fall_state
     from .fall_fsm import FallState
     from .fall_state import FallStateManager
@@ -287,44 +289,34 @@ def main(argv: list[str] | None = None) -> int:
             latest_events: list = []
             last_live_inference_at: float | None = None
 
+            def publish_event(event) -> None:
+                if telemetry_log is not None:
+                    write_jsonl(telemetry_log, telemetry_record(event))
+                if event.incident_event == "detected":
+                    log = logger.warning if event.state == FallState.BED_REST else logger.error
+                    log("%s person=%d t=%.2fs", event.state.name, event.person_id, event.t_seconds)
+                elif event.incident_event == "recovered":
+                    logger.info("RECOVERED person=%d t=%.2fs", event.person_id, event.t_seconds)
+                else:
+                    return
+                if alert_log is not None:
+                    write_jsonl(alert_log, event_record(event, event.incident_event), flush=True)
+
+            fall_events = FallEventService(
+                fall_state=fall_manager, event_sink=CallableEventSink(publish_event)
+            )
+
             def on_frame(persons, t_seconds, frame) -> None:
                 nonlocal last_live_inference_at
                 if is_live:
                     last_live_inference_at = monotonic()
                 frame_height, frame_width = frame.shape[:2]
-                events = fall_manager.update(
-                    persons, t_seconds, frame_width=frame_width, frame_height=frame_height
+                latest_events[:] = fall_events.process(
+                    persons,
+                    t_seconds=t_seconds,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
                 )
-                latest_events[:] = events
-                for event in events:
-                    if telemetry_log is not None:
-                        write_jsonl(telemetry_log, telemetry_record(event))
-                    if event.incident_event == "detected":
-                        log = (
-                            logger.warning
-                            if event.state == FallState.BED_REST
-                            else logger.error
-                        )
-                        log(
-                            "%s person=%d t=%.2fs",
-                            event.state.name,
-                            event.person_id,
-                            event.t_seconds,
-                        )
-                    elif event.incident_event == "recovered":
-                        logger.info(
-                            "RECOVERED person=%d t=%.2fs",
-                            event.person_id,
-                            event.t_seconds,
-                        )
-                    else:
-                        continue
-                    if alert_log is not None:
-                        write_jsonl(
-                            alert_log,
-                            event_record(event, event.incident_event),
-                            flush=True,
-                        )
 
             def overlay(canvas, persons):
                 additional_age_s = (
