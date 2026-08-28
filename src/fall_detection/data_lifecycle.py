@@ -241,13 +241,33 @@ def _probe_url(url: str) -> dict[str, object]:
 
 def probe_batch(path: str | Path) -> list[dict[str, object]]:
     batch = load_batch(path)
-    results: list[dict[str, object]] = []
-    for clip in batch.clips:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=_WORKERS) as pool:
-            probes = list(pool.map(_probe_url, clip.urls))
-        selected = next((probe["url"] for probe in probes if probe["ok"]), None)
-        results.append({"clip_id": clip.clip_id, "mirrors": probes, "selected_mirror": selected})
-    return results
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_WORKERS) as pool:
+        futures = {
+            (clip.clip_id, index): pool.submit(_probe_url, url)
+            for clip in batch.clips
+            for index, url in enumerate(clip.urls)
+        }
+        probes = {
+            key: future.result()
+            for key, future in futures.items()
+        }
+    return [
+        {
+            "clip_id": clip.clip_id,
+            "mirrors": [
+                probes[(clip.clip_id, index)] for index in range(len(clip.urls))
+            ],
+            "selected_mirror": next(
+                (
+                    probe["url"]
+                    for index in range(len(clip.urls))
+                    if (probe := probes[(clip.clip_id, index)])["ok"]
+                ),
+                None,
+            ),
+        }
+        for clip in batch.clips
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:
