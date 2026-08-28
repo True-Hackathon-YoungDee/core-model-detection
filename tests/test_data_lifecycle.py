@@ -101,6 +101,50 @@ def test_download_falls_back_verifies_and_atomically_promotes(tmp_path: Path, mo
     assert data_lifecycle.download_batch(batch, root) == destination
 
 
+def test_download_reports_progress_once_per_clip(tmp_path: Path, monkeypatch):
+    content = b"approved video bytes"
+    manifest = _manifest(tmp_path, checksum=hashlib.sha256(content).hexdigest())
+    batch = _batch(tmp_path, manifest, urls=["https://one/clip"])
+    monkeypatch.setattr(
+        data_lifecycle,
+        "_request",
+        lambda url, *, method="GET", headers=None: (200, {}, content),
+    )
+    root = tmp_path / "datasets"
+    events: list[tuple[str, bool, str | None]] = []
+
+    data_lifecycle.download_batch(
+        batch, root, on_progress=lambda clip_id, ok, error: events.append((clip_id, ok, error))
+    )
+
+    assert events == [("clip-a", True, None)]
+
+
+def test_download_reports_progress_failure_with_error_message(tmp_path: Path, monkeypatch):
+    manifest = _manifest(tmp_path, checksum="a" * 64)
+    batch = _batch(tmp_path, manifest, urls=["https://one/clip"])
+    monkeypatch.setattr(
+        data_lifecycle,
+        "_request",
+        lambda url, *, method="GET", headers=None: (200, {}, b"wrong"),
+    )
+    root = tmp_path / "datasets"
+    events: list[tuple[str, bool, str | None]] = []
+
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        data_lifecycle.download_batch(
+            batch,
+            root,
+            on_progress=lambda clip_id, ok, error: events.append((clip_id, ok, error)),
+        )
+
+    assert len(events) == 1
+    clip_id, ok, error = events[0]
+    assert clip_id == "clip-a"
+    assert ok is False
+    assert error is not None and "checksum mismatch" in error
+
+
 def test_download_rejects_bad_checksum_and_cleans_staging(tmp_path: Path, monkeypatch):
     manifest = _manifest(tmp_path, checksum="a" * 64)
     batch = _batch(tmp_path, manifest, urls=["https://one/clip"])

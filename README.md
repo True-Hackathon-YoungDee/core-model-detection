@@ -264,6 +264,29 @@ are in [docs/fall-detection.md § Profiles and configuration](docs/fall-detectio
 - No `print()` anywhere in the package — every module uses
   `logger = logging.getLogger(__name__)`.
 
+## Approved video batches
+
+Use `fall-data run` for the complete manifest-bound lifecycle. It downloads
+the batch, processes each clip headlessly with the default pose and fall
+configuration, writes durable incident summaries, then removes only inputs
+whose successful classification was recorded.
+
+```bash
+uv run fall-data run \
+  --batch evaluation/batches/urfd.example.toml \
+  --result-log results/urfd-run.jsonl \
+  --data-root datasets
+```
+
+`--result-log` is required and must be outside the batch directory. Both
+stdout and the append-only result log use schema-v1 JSON Lines. Stdout emits
+`download`, `classify`, `delete`, and `complete` progress events with
+`completed`, `total`, and `percent`; the result log additionally records the
+descriptor and manifest fingerprints, checksums, frame counts, elapsed time,
+and detected/recovered incidents. Re-running the same command resumes from
+the durable records: it does not classify a successful clip again, and retries
+only a failed cleanup after re-verifying its checksum.
+
 ## Replay regression
 
 The repository commits numerical feature traces, checksums, and labels—not

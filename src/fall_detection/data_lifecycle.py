@@ -15,7 +15,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .evaluation import EvaluationManifest, _file_sha256, _nonempty_string, load_manifest
 
@@ -154,7 +154,12 @@ def _download_one(clip: BatchClip, target: Path, expected_sha256: str) -> None:
             if digest != expected_sha256:
                 raise ValueError(f"checksum mismatch for {clip.clip_id}: expected {expected_sha256}, got {digest}")
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
+            staging = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
+            try:
+                staging.write_bytes(data)
+                staging.replace(target)
+            finally:
+                staging.unlink(missing_ok=True)
             return
         except (OSError, urllib.error.URLError, ValueError) as error:
             failures.append(f"{url}: {error}")
@@ -182,7 +187,83 @@ def _validate_complete(destination: Path, batch: DataBatch) -> bool:
     return True
 
 
-def download_batch(path: str | Path, data_root: str | Path = "datasets") -> Path:
+def _clip_source(batch: DataBatch, root: Path, clip_id: str) -> tuple[Path, str]:
+    manifest_clip = next(clip for clip in batch.manifest.clips if clip.clip_id == clip_id)
+    destination = _contained(root, root / batch.storage_prefix)
+    source = _contained(
+        destination,
+        destination / manifest_clip.source.relative_to(batch.storage_prefix),
+    )
+    return source, manifest_clip.source_sha256
+
+
+def source_is_verified(batch: DataBatch, root: Path, clip_id: str) -> bool:
+    """Return whether one manifest-owned local source has its expected digest."""
+    source, expected_sha256 = _clip_source(batch, root, clip_id)
+    return source.is_file() and _file_sha256(source) == expected_sha256
+
+
+def download_selected_clips(
+    batch: DataBatch,
+    data_root: str | Path,
+    clip_ids: set[str],
+    *,
+    on_progress: Callable[[str, bool, str | None], None] | None = None,
+) -> dict[str, str | None]:
+    """Download selected manifest clips into their final paths atomically.
+
+    Unlike :func:`download_batch`, this intentionally leaves no whole-batch
+    receipt: callers use it while processing and may remove each verified input.
+    """
+    root = Path(data_root)
+    unknown = clip_ids - {clip.clip_id for clip in batch.clips}
+    if unknown:
+        raise ValueError(f"unknown batch clip: {sorted(unknown)[0]}")
+    destination = _contained(root, root / batch.storage_prefix)
+    destination.mkdir(parents=True, exist_ok=True)
+    manifest_by_id = {clip.clip_id: clip for clip in batch.manifest.clips}
+    selected = [clip for clip in batch.clips if clip.clip_id in clip_ids]
+    outcomes: dict[str, str | None] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_WORKERS) as pool:
+        futures = {
+            item.clip_id: pool.submit(
+                _download_one,
+                item,
+                _clip_source(batch, root, item.clip_id)[0],
+                manifest_by_id[item.clip_id].source_sha256,
+            )
+            for item in selected
+        }
+        for item in selected:
+            try:
+                futures[item.clip_id].result()
+            except Exception as error:
+                outcomes[item.clip_id] = str(error)
+                if on_progress is not None:
+                    on_progress(item.clip_id, False, str(error))
+            else:
+                outcomes[item.clip_id] = None
+                if on_progress is not None:
+                    on_progress(item.clip_id, True, None)
+    return outcomes
+
+
+def delete_verified_clip(batch: DataBatch, data_root: str | Path, clip_id: str) -> Path:
+    """Delete exactly one checksum-verified manifest source."""
+    root = Path(data_root)
+    source, expected_sha256 = _clip_source(batch, root, clip_id)
+    if not source.is_file() or _file_sha256(source) != expected_sha256:
+        raise ValueError(f"source is missing or checksum does not match for {clip_id}")
+    source.unlink()
+    return source
+
+
+def download_batch(
+    path: str | Path,
+    data_root: str | Path = "datasets",
+    *,
+    on_progress: Callable[[str, bool, str | None], None] | None = None,
+) -> Path:
     batch = load_batch(path)
     root = Path(data_root)
     destination = _contained(root, root / batch.storage_prefix)
@@ -206,8 +287,15 @@ def download_batch(path: str | Path, data_root: str | Path = "datasets") -> Path
                 )
                 for item in batch.clips
             ]
-            for future in futures:
-                future.result()
+            for item, future in zip(batch.clips, futures):
+                try:
+                    future.result()
+                except Exception as error:
+                    if on_progress is not None:
+                        on_progress(item.clip_id, False, str(error))
+                    raise
+                if on_progress is not None:
+                    on_progress(item.clip_id, True, None)
         (staging / RECEIPT_NAME).write_text(json.dumps(_receipt(batch), sort_keys=True) + "\n")
         staging.replace(destination)
     except Exception:
@@ -273,20 +361,26 @@ def probe_batch(path: str | Path) -> list[dict[str, object]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Probe, download, and safely delete manifest-bound fall-video batches")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("probe", "download", "delete"):
+    for name in ("probe", "download", "delete", "run"):
         command = commands.add_parser(name)
         command.add_argument("--batch", type=Path, required=True)
         command.add_argument("--data-root", type=Path, default=Path("datasets"))
         if name == "delete":
             command.add_argument("--yes", action="store_true")
+        if name == "run":
+            command.add_argument("--result-log", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "probe":
             result: object = probe_batch(args.batch)
         elif args.command == "download":
             result = {"destination": str(download_batch(args.batch, args.data_root))}
-        else:
+        elif args.command == "delete":
             result = {"deleted": str(delete_batch(args.batch, args.data_root, yes=args.yes))}
+        else:
+            from .batch_processing import run_batch
+
+            return run_batch(args.batch, args.data_root, args.result_log)
         sys.stdout.write(json.dumps(result, sort_keys=True) + "\n")
     except ValueError as error:
         sys.stderr.write(f"fall-data: {error}\n")
