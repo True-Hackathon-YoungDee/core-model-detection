@@ -7,7 +7,7 @@ trace_sha256 = "0000000000000000000000000000000000000000000000000000000000000000
 
 [[clips]]
 id = "upfall-subject01-activity11-trial01-camera01"
-source = "datasets/up-fall/subject01/activity11/trial01/camera01.mp4"
+source = "up-fall/example/subject01/activity11/trial01/camera01.mp4"
 source_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 subject = "subject01"
 trial = "activity11-trial01"
@@ -23,7 +23,7 @@ recovered = true
 
 [[clips]]
 id = "upfall-subject02-activity11-trial01-camera01"
-source = "datasets/up-fall/subject02/activity11/trial01/camera01.mp4"
+source = "up-fall/example/subject02/activity11/trial01/camera01.mp4"
 source_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 subject = "subject02"
 trial = "activity11-trial01"

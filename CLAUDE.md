@@ -6,11 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Physics-informed fall-detection pipeline on top of MediaPipe Pose (Tasks API, `mediapipe>=1.0.1`). Package: `src/fall_detection/`.
 
+## Docs map
+
+- `README.md` — install, run, CLI flags, strategy benchmarks, onboarding quickstart.
+- `docs.md` — guided, file-by-file reading order for a new contributor.
+- `docs/fall-detection.md` — the fall-detection operating guide: FSM transitions, config profiles, telemetry, replay evaluation, limitations.
+
+Point edits at whichever of these already owns the topic; don't duplicate content across them.
+
 ## Commands
 
 - Package manager is **uv**. Install/sync: `uv sync`. Run anything: `uv run <cmd>`.
 - Run tests: `uv run pytest` (testpaths already scoped to `tests/` via pyproject.toml).
 - Run the CLI: `uv run fall-detection --source 0 [flags...]` (or a video file path instead of `0`).
+- Two console scripts are defined in `pyproject.toml`: `fall-detection` (`fall_detection:main`) and `fall-evaluate` (`fall_detection.evaluation:main`, replay regression — see README's [Replay regression](README.md#replay-regression)).
+- `--fall-config` takes a TOML file; `config/fall_detection.example.toml` is the annotated template to copy.
 - **No lint, format, or type-check tooling is configured** (no ruff/black/mypy/pre-commit). Don't invent commands for these — there's nothing to run.
 - **No CI** exists yet.
 
@@ -35,3 +45,7 @@ No `print()` anywhere in the package by design — use `logger = logging.getLogg
 ## CLI output
 
 `--output <path>` writes annotated frames to a video file (file sources only, rejected for live sources). Frame annotation only happens when display or output writer is enabled.
+
+## Offline modules
+
+`biomechanics.py`, `discriminators.py`, and `kalman.py` are unit-tested (`test_biomechanics.py`, `test_discriminators.py`, `test_kalman.py`) but nothing in `cli.py → runner.py → fall_state.py → fall_fsm.py → fall_evidence.py` calls into them — they're a physics reference / future-use layer, not active code on the CLI path. Don't assume an edit there changes runtime behavior, and don't delete them as dead code. `geometry.py` is the one exception reached at runtime: `biomechanics.py` imports its convex-hull helpers, so it isn't fully isolated.

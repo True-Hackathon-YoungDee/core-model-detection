@@ -541,6 +541,47 @@ def test_event_metrics_are_aggregated_from_executed_trace_replay(tmp_path: Path)
     }
 
 
+def test_clip_classification_counts_incidents_independently_of_event_matching(
+    tmp_path: Path,
+):
+    """A late/wrong event alert is still a positive clip prediction."""
+    trace = tmp_path / "trace.jsonl"
+    trace_sha = _write_trace(
+        trace,
+        {
+            "matched-positive": (4.0, [_observation(2.0, downward_speed=1.0)]),
+            "late-positive": (4.0, [_observation(3.5, downward_speed=1.0)]),
+            "missed-positive": (4.0, [_observation(0.0)]),
+            "false-positive": (4.0, [_observation(2.0, downward_speed=1.0)]),
+            "true-negative": (4.0, [_observation(0.0)]),
+        },
+    )
+    manifest = tmp_path / "manifest.toml"
+    manifest.write_text(
+        _manifest_text(
+            trace.name,
+            trace_sha,
+            [
+                    {"id": "matched-positive", "duration_s": 4.0, "events": [{"onset_s": 1.0, "match_end_s": 3.0}]},
+                    {"id": "late-positive", "duration_s": 4.0, "events": [{"onset_s": 1.0, "match_end_s": 3.0}]},
+                    {"id": "missed-positive", "duration_s": 4.0, "events": [{"onset_s": 1.0, "match_end_s": 3.0}]},
+                    {"id": "false-positive", "duration_s": 4.0},
+                    {"id": "true-negative", "duration_s": 4.0},
+            ],
+        )
+    )
+
+    report = evaluate_manifest(manifest, "relaxed-or", FallConfig())
+
+    assert report["clip_confusion"] == {"TP": 2, "FP": 1, "TN": 1, "FN": 1}
+    assert report["classification_metrics"] == {
+        "accuracy": 0.6,
+        "precision": pytest.approx(2 / 3),
+        "recall": pytest.approx(2 / 3),
+        "f1_score": pytest.approx(2 / 3),
+    }
+
+
 def test_same_kind_alert_after_label_match_end_is_a_miss_and_false_positive(
     tmp_path: Path,
 ):

@@ -946,6 +946,10 @@ def evaluate_manifest(
     true_positive = 0
     false_positive = 0
     missed = 0
+    clip_true_positive = 0
+    clip_false_positive = 0
+    clip_true_negative = 0
+    clip_false_negative = 0
     alert_latencies: list[float] = []
     recovery_times: list[float] = []
     event_results: list[dict[str, object]] = []
@@ -963,6 +967,16 @@ def evaluate_manifest(
         if abs(float(replay_clip["duration_s"]) - manifest_clip.duration_s) > 1e-6:
             raise ValueError(f"duration mismatch for clip {manifest_clip.clip_id}")
         incidents = list(replay_clip["incidents"])  # type: ignore[arg-type]
+        actual_positive = bool(manifest_clip.events)
+        predicted_positive = bool(incidents)
+        if actual_positive and predicted_positive:
+            clip_true_positive += 1
+        elif predicted_positive:
+            clip_false_positive += 1
+        elif actual_positive:
+            clip_false_negative += 1
+        else:
+            clip_true_negative += 1
         detected_count += len(incidents)
         matches = _maximum_cardinality_event_matches(manifest_clip.events, incidents)
         used_incidents = set(matches.values())
@@ -1031,6 +1045,12 @@ def evaluate_manifest(
         )
 
     total_hours = sum(clip.duration_s for clip in selected_clips) / 3600.0
+    clip_total = (
+        clip_true_positive
+        + clip_false_positive
+        + clip_true_negative
+        + clip_false_negative
+    )
     metrics = {
         "event_sensitivity": _ratio(true_positive, labelled_count),
         "precision": _ratio(true_positive, detected_count),
@@ -1061,6 +1081,25 @@ def evaluate_manifest(
             "true_positive": true_positive,
             "false_positive": false_positive,
             "missed": missed,
+        },
+        "clip_confusion": {
+            "TP": clip_true_positive,
+            "FP": clip_false_positive,
+            "TN": clip_true_negative,
+            "FN": clip_false_negative,
+        },
+        "classification_metrics": {
+            "accuracy": _ratio(clip_true_positive + clip_true_negative, clip_total),
+            "precision": _ratio(
+                clip_true_positive, clip_true_positive + clip_false_positive
+            ),
+            "recall": _ratio(
+                clip_true_positive, clip_true_positive + clip_false_negative
+            ),
+            "f1_score": _ratio(
+                2 * clip_true_positive,
+                2 * clip_true_positive + clip_false_positive + clip_false_negative,
+            ),
         },
         "metrics": metrics,
         "events": event_results,

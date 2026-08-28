@@ -7,7 +7,7 @@ trace_sha256 = "0000000000000000000000000000000000000000000000000000000000000000
 
 [[clips]]
 id = "le2i-subject01-home01-fall01"
-source = "datasets/le2i/home01/subject01-fall01.avi"
+source = "le2i/example/home01/subject01-fall01.avi"
 source_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 subject = "subject01"
 trial = "fall01"

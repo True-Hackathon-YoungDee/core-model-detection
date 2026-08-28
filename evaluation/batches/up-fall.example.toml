@@ -1,0 +1,21 @@
+# Replace these non-routable placeholders with approved, direct RGB asset URLs.
+# Do not point this at UP-Fall landing pages or IMU-only archives.
+schema_version = 1
+dataset = "up-fall"
+batch = "example"
+manifest = "../manifests/up-fall.example.toml"
+storage_prefix = "up-fall/example"
+
+[[clips]]
+id = "upfall-subject01-activity11-trial01-camera01"
+urls = [
+  "https://approved.example.invalid/up-fall/subject01/activity11/trial01/camera01.mp4",
+  "https://mirror.example.invalid/up-fall/subject01/activity11/trial01/camera01.mp4",
+]
+
+[[clips]]
+id = "upfall-subject02-activity11-trial01-camera01"
+urls = [
+  "https://approved.example.invalid/up-fall/subject02/activity11/trial01/camera01.mp4",
+  "https://mirror.example.invalid/up-fall/subject02/activity11/trial01/camera01.mp4",
+]

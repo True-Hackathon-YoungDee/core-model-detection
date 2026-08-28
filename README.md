@@ -1,20 +1,74 @@
 # fall-detection
 
 MediaPipe pose core for a fall-detection pipeline: 33 body landmarks per person,
-from a webcam or a video file, for one person or several. Everything reports
+from a webcam or a video file, for one person or several. Fall decisions sit on
+top of this keypoint layer — pixel-corrected RGB geometry and duration-weighted
+evidence feed a deterministic temporal state machine. Everything reports
 through `logging` — the package contains no `print`.
 
-Two detection strategies ship side by side: the plain full-frame landmarker, and
-a **cascade** that finds person boxes first and landmarks each body separately.
-The cascade exists because the plain path loses people — see
-[Choosing a strategy](#choosing-a-strategy).
+## Quickstart
 
-Fall decisions sit on top of this keypoint layer: pixel-corrected RGB geometry
-and duration-weighted evidence feed a deterministic temporal FSM. MediaPipe
-world landmarks remain useful for anatomical display, but their hip-centred
-coordinates are not treated as room motion or floor height. See the
-[fall-detection operating guide](docs/fall-detection.md) for transitions,
-configuration, telemetry, replay evaluation, and limitations.
+```bash
+uv sync                                                   # install
+uv run fall-detection --source 0                          # webcam, overlay window
+uv run fall-detection --source clip.mp4 --output out.mp4 --no-display
+uv run pytest                                              # 258 tests
+```
+
+The first run downloads the pose model bundle into `models/` (gitignored).
+Press `q` or `Esc` to close the overlay window.
+
+## Repository map
+
+| Path | What lives there |
+| --- | --- |
+| `src/fall_detection/` | the package — pose detection, fall FSM, CLI (see [Layout](#layout)) |
+| `tests/` | pytest suite, TDD-developed; synthetic fixtures in `conftest.py` / `synthetic_falls.py` |
+| `docs/fall-detection.md` | fall-detection operating guide: FSM, config, telemetry, replay, limits |
+| `docs.md` | onboarding reading order / mental model for new contributors |
+| `config/` | example `--fall-config` TOML (thresholds, furniture ROIs) |
+| `evaluation/` | replay manifests (`manifests/`) and committed feature traces (`traces/`) |
+| `scripts/` | `extract_fall_traces.py` — regenerate a trace from raw video |
+| `models/` | downloaded `.task` bundles (gitignored, created on first run) |
+
+## How it fits together
+
+```
+cli.py:main()
+  -> PoseConfig
+  -> VideoFileRunner / LiveStreamRunner        (runner.py)
+       -> engine.py:build_engine picks:
+            NativeEngine    (pose.py)
+            CascadeEngine   (cascade.py + person_detector.py)
+       -> PosePipeline:
+            tracking.py:IdentityTracker        (stable ids across frames)
+            smoothing.py:LandmarkSmoother      (One-Euro filter)
+       -> per-frame list[PersonPose]
+       -> fall_state.py:FallStateManager       (one tracker per stable id)
+            -> fall_evidence.py:ImageEvidenceExtractor / classify_evidence
+            -> fall_fsm.py:PersonFallFSM.step()
+            -> FallEvent / FallIncident
+       -> drawing.py overlay, VideoWriter, telemetry JSONL
+```
+
+Two concerns are layered here and separable: **pose estimation** (getting
+landmarks reliably, one or many people) and **fall detection** (turning a
+stream of landmarks into a state-machine decision). Run pose-only with
+`--no-fall-detection`.
+
+## Where to start reading
+
+| If you want to change… | Start at |
+| --- | --- |
+| CLI flags / wiring | `cli.py` |
+| how landmarks are produced | `pose.py`, then `engine.py` |
+| multi-person recall | `cascade.py`, `person_detector.py` |
+| fall decisions | `fall_evidence.py` → `fall_fsm.py` → `fall_state.py` |
+| thresholds, without touching code | `config/fall_detection.example.toml` |
+
+For a fully guided, file-by-file reading order with rationale — the version of
+this section written for someone who has never opened the repo — see
+[docs.md](docs.md).
 
 ## Install
 
@@ -58,10 +112,12 @@ into `models/` (gitignored).
 | `--source` | `0` | camera index, `/dev/video*`, a video file path, or a stream URL (`rtsp://...`, or DroidCam/IP Webcam `http://<phone-ip>:4747/mjpegfeed`) |
 | `--model` | `full` | `lite` / `full` / `heavy` bundle |
 | `--model-path` | – | use a local `.task` file instead of downloading |
+| `--cache-dir` | `models/` | where downloaded bundles live |
 | `--num-poses` | `1` | maximum people tracked |
 | `--best-only` | off | keep only the highest-scoring person |
 | `--gpu` | off | try the GPU delegate (Linux; falls back to CPU) |
 | `--no-display` | off | headless, no cv2 window |
+| `--display-max-width` | `1280` | cap initial display window width in px, preserves aspect ratio |
 | `--no-smoothing` | off | disable One-Euro landmark filtering |
 | `--min-detection-confidence` / `--min-presence-confidence` / `--tracking-confidence` | `0.5` | BlazePose thresholds |
 | `--max-frames` | – | stop after N frames (testing aid) |
@@ -74,6 +130,7 @@ into `models/` (gitignored).
 | `--min-box-px` | `48` | ignore person boxes smaller than this |
 | `--log-level` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `--log-file` | – | mirror logs to a file |
+| `--output` | – | write annotated frames to this video file (e.g. `out.mp4`); file sources only, rejected for live sources |
 | `--no-fall-detection` | off | pose-only, skip the fall-state layer |
 | `--body-mass-kg` | – | deprecated compatibility flag; has no effect on RGB fall decisions |
 | `--fall-config` | – | validated TOML threshold/ROI configuration |
@@ -164,6 +221,48 @@ where the cascade returned 3 or 4. The gap widens as people get closer.
 | `evaluation.py` | manifest validation, four replay strategies, event metrics |
 | `logging_config.py` | `setup_logging`, rate limiting, native-log quieting |
 | `cli.py` | argument parsing and wiring |
+| `geometry.py` | pure-numpy 2D convex hull / point-to-polygon distance |
+| `biomechanics.py` | De Leva center-of-mass, postural instability index *(offline)* |
+| `discriminators.py` | physics-based ADL (activities-of-daily-living) discriminators *(offline)* |
+| `kalman.py` | extended Kalman filter landmark stabilizer, occlusion-tolerant *(offline)* |
+
+`geometry.py`, `biomechanics.py`, `discriminators.py`, and `kalman.py` are
+unit-tested (`test_geometry.py`, `test_biomechanics.py`, `test_discriminators.py`,
+`test_kalman.py`) but marked *(offline)* because nothing in
+`cli.py → runner.py → fall_state.py → fall_fsm.py → fall_evidence.py` calls into
+them — treat them as a physics reference / future-use layer, not active code.
+`geometry.py` is the one exception reached at runtime: `biomechanics.py` imports
+its convex-hull helpers.
+
+## Configuration
+
+`--fall-config` takes a TOML file of thresholds and furniture ROIs;
+[`config/fall_detection.example.toml`](config/fall_detection.example.toml) is the
+annotated starting point — copy it and edit. `profile` selects one of
+`sensitive` / `balanced` / `precision` as a baseline (`--fall-profile` overrides
+it from the CLI without editing the file). Full semantics of every threshold
+group (`[dynamic]`, `[posture]`, `[timing]`, `[quality]`, `[[furniture_rois]]`)
+are in [docs/fall-detection.md § Profiles and configuration](docs/fall-detection.md#profiles-and-configuration).
+
+## Testing and development
+
+- Package manager is **uv**: `uv sync` to install, `uv run <cmd>` to run
+  anything.
+- `uv run pytest` runs the suite (258 tests, scoped to `tests/` via
+  `pyproject.toml`).
+- This is TDD-developed code: write the failing test first, watch it fail,
+  then implement.
+- `tests/` intentionally has no `__init__.py`, so pytest's prepend import mode
+  puts `tests/` on `sys.path`. Import shared fixtures with a **bare**
+  `from conftest import make_person, standing_pose`, not
+  `from tests.conftest import ...`. Don't add `tests/__init__.py`.
+- Shared synthetic `PersonPose` fixtures: `tests/conftest.py` (basic builders)
+  and `tests/synthetic_falls.py` (full keyframed standing→lying sequence for
+  FSM/orchestrator tests).
+- No lint, format, or type-check tooling is configured (no ruff/black/mypy/
+  pre-commit), and no CI exists yet — don't invent commands for either.
+- No `print()` anywhere in the package — every module uses
+  `logger = logging.getLogger(__name__)`.
 
 ## Replay regression
 
@@ -194,6 +293,13 @@ configuration; a profile, threshold, or ROI mismatch requires re-extraction.
 
 ## Notes that bite
 
+- **MediaPipe world landmarks are y-down, not y-up.** `world_landmarks`
+  (metric, hip-centered) are **not** flipped to a standard "y-up" convention —
+  `y` increases **downward**, same as normalized image landmarks. So
+  "vertical"/"up" in any physics code is the `-y` direction, and the ground
+  plane is `(x, z)`. Verified against a real MediaPipe inference and documented
+  in both `src/fall_detection/biomechanics.py:8-11` and `tests/conftest.py:3-6`.
+  Standard 3D-graphics/physics axis intuition is backwards here — don't assume it.
 - **Timestamps must strictly increase.** VIDEO derives them from the file fps;
   LIVE_STREAM uses `time.monotonic_ns()` rebased to stream start, never the wall
   clock. `PoseDetector` bumps a non-increasing timestamp and warns instead of
@@ -242,3 +348,11 @@ want the raw single-landmarker path.
 
 Each `PersonPose` carries `landmarks` (33 normalized), `world_landmarks` (metric),
 `score`, `bbox` and `centroid` — the inputs a fall heuristic needs.
+
+## Further reading
+
+| Topic | Doc |
+| --- | --- |
+| Guided, file-by-file onboarding reading order | [docs.md](docs.md) |
+| Fall-detection FSM, config profiles, telemetry, replay evaluation, limits | [docs/fall-detection.md](docs/fall-detection.md) |
+| Dev/agent conventions and repo-specific gotchas | [CLAUDE.md](CLAUDE.md) |
