@@ -147,7 +147,7 @@ uv run python scripts/extract_fall_traces.py \
   --output evaluation/traces/local-regression-v2.jsonl \
   --source-root /path/to/repository-root \
   --model-path /path/to/pose_landmarker_full.task \
-  --fall-profile balanced
+  --fall-profile balanced --force
 
 uv run fall-evaluate \
   --manifest evaluation/manifests/local-falls.toml \
@@ -174,12 +174,28 @@ boundary. Replay expires disappeared identities at the same configured age as
 the runtime, so state dwell does not extend a stale FSM to clip end. Metrics
 are event-level, never frame-level.
 
-The local balanced-profile regression has four of four labelled
-`OBSERVED_FALL` incidents: clips 1 and 2 are `HIGH`, clips 3 and 4 are
-`MEDIUM`, and only clip 4 recovers. The committed trace also contains both
-zero-event `sample_1.mp4` and `sample_2.mp4` negatives, each with zero emitted
-incidents. These fixtures guard behavior; they are too small and too staged to
-establish production performance.
+The local balanced-profile regression labels 10 `OBSERVED_FALL` clips: 8 are
+detected (clips 1, 2, 5, 7, 8, 10 are `HIGH`; clips 3 and 4 are `MEDIUM`, and
+only clip 4 recovers), and 2 (clips 6 and 9) are genuine misses — both are
+short (~1.9s) staged falls where the labelled event never reaches
+`FALL_CONFIRMED` before the clip ends. `tests/test_evaluation.py` pins these
+outcomes, including the misses; don't "fix" the test by relabelling those
+clips. The committed trace also contains both zero-event `sample_1.mp4` and
+`sample_2.mp4` negatives, each with zero emitted incidents. These fixtures
+guard behavior; they are too small and too staged to establish production
+performance.
+
+`evaluation/manifests/synthetic-adl.toml` is a second, separate replay set:
+16 hand-authored `FallFeatures` streams (6 falls, 8 ADL hard negatives such
+as fast sit / brief lie-down / bend / squat / kneel / jump / brisk walk /
+deliberate floor-sit, and 2 degenerate inputs), generated deterministically
+by `scripts/generate_synthetic_traces.py` from
+`src/fall_detection/synthetic_traces.py`. These are not recordings of a real
+subject — they exist to pin exact FSM behavior against ADL motions the small
+real negative set doesn't cover. Its accuracy metrics describe how the FSM
+responds to authored inputs, not measured system accuracy; see that module's
+docstring and the README "Replay regression" section before quoting them as
+the latter.
 
 ## Public datasets and leakage-safe splits
 

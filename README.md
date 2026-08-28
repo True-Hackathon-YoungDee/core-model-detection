@@ -267,7 +267,12 @@ are in [docs/fall-detection.md § Profiles and configuration](docs/fall-detectio
 ## Replay regression
 
 The repository commits numerical feature traces, checksums, and labels—not
-videos or model bundles. Replay the local regression set with:
+videos or model bundles. There are two committed replay sets, and they mean
+different things — don't conflate them.
+
+**`local-falls`** — real MediaPipe traces extracted from real video (12
+clips: 10 labelled falls, 2 person-present negatives). This is the one
+accuracy claim in this repo that reflects real-world behavior.
 
 ```bash
 uv run fall-evaluate \
@@ -284,12 +289,42 @@ uv run python scripts/extract_fall_traces.py \
   --output evaluation/traces/local-regression-v2.jsonl \
   --source-root /path/to/repository-root \
   --model-path /path/to/pose_landmarker_full.task \
-  --fall-profile balanced
+  --fall-profile balanced --force
 ```
 
 Extraction records the pose-model SHA-256 and a canonical fingerprint of the
 exact fall configuration, including furniture ROIs. Replay must use that same
 configuration; a profile, threshold, or ROI mismatch requires re-extraction.
+
+**`synthetic-adl`** — hand-authored `FallFeatures` streams (6 fall
+geometries, 8 ADL hard negatives — fast sit, brief lie-down, bend, squat,
+kneel, jump, brisk walk, deliberate floor-sit — and 2 degenerate inputs).
+These are **not recordings of a real subject**; they exist to pressure-test
+the FSM against motions the small `local-falls` negative set doesn't cover,
+and to pin exact per-clip behavior so a threshold change in `fall_fsm.py` /
+`fall_evidence.py` can't silently flip clips in opposite directions and
+still pass an aggregate metric. Its recall/precision/F1 describe how the
+FSM responds to these authored inputs, not measured system accuracy — never
+quote them as the latter.
+
+```bash
+uv run fall-evaluate \
+  --manifest evaluation/manifests/synthetic-adl.toml \
+  --strategy temporal-fsm
+```
+
+Regenerate deterministically (no video, no model bundle needed) from the
+scenario catalog in `src/fall_detection/synthetic_traces.py`:
+
+```bash
+uv run python scripts/generate_synthetic_traces.py
+```
+
+Both regressions are gated by pytest (`tests/test_evaluation.py`,
+`tests/test_synthetic_regression.py`), not by `fall-evaluate` itself —
+`fall-evaluate` prints a JSON report and exits 0 regardless of the numbers
+inside it; it is not a pass/fail gate on its own. `mise run regression_test`
+runs the test suite and replays both manifests in sequence.
 
 ## Notes that bite
 

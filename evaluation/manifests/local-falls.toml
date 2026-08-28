@@ -1,7 +1,7 @@
 schema_version = 1
 dataset = "local-falls"
 trace = "../traces/local-regression-v2.jsonl"
-trace_sha256 = "d666a6e2906b5e69d8ead0f0c108655cf827060a045223c03746d9878626e331"
+trace_sha256 = "9133b3d1ee7f4f95ab1d292b60fe922d63478cf5e6f778cac51cfab27e3ab687"
 
 [[clips]]
 id = "fall-example-1"
@@ -66,6 +66,102 @@ kind = "OBSERVED_FALL"
 onset_s = 0.866
 match_end_s = 2.866
 recovered = true
+
+[[clips]]
+id = "fall-example-5"
+source = "video/input/fall_example_5.mp4"
+source_sha256 = "611dc000e58ca78ffc884cd93a347352301030512fcb56c7b6cd4b60a3a36a6f"
+subject = "local-subject-5"
+trial = "fall-trial-5"
+camera = "camera-1"
+split = "regression"
+duration_s = 1.866667
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.125
+match_end_s = 1.866667
+recovered = false
+
+[[clips]]
+id = "fall-example-6"
+source = "video/input/fall_example_6.mp4"
+source_sha256 = "8badba1f68272b4cfceb7d947e072d40979fd9b4f7317291ba67726889a06487"
+subject = "local-subject-6"
+trial = "fall-trial-6"
+camera = "camera-1"
+split = "regression"
+duration_s = 1.9
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.625
+match_end_s = 1.9
+recovered = false
+
+[[clips]]
+id = "fall-example-7"
+source = "video/input/fall_example_7.mp4"
+source_sha256 = "ab84fa59fa1b064394db9908049492ab0a482310653f3a95f73a17f233df2542"
+subject = "local-subject-7"
+trial = "fall-trial-7"
+camera = "camera-1"
+split = "regression"
+duration_s = 1.9
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.375
+match_end_s = 1.9
+recovered = false
+
+[[clips]]
+id = "fall-example-8"
+source = "video/input/fall_example_8.mp4"
+source_sha256 = "746f561492faa84dc9310895a3e7ba97f7c5b2f3587b4e295d4c31708dbe4d52"
+subject = "local-subject-8"
+trial = "fall-trial-8"
+camera = "camera-1"
+split = "regression"
+duration_s = 1.866667
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.375
+match_end_s = 1.866667
+recovered = false
+
+[[clips]]
+id = "fall-example-9"
+source = "video/input/fall_example_9.mp4"
+source_sha256 = "bf4a62df60e8c3fe5ec59787a29df0c3ccbef3659080adfd37e9b832386c18fb"
+subject = "local-subject-9"
+trial = "fall-trial-9"
+camera = "camera-1"
+split = "regression"
+duration_s = 1.9
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.875
+match_end_s = 1.9
+recovered = false
+
+[[clips]]
+id = "fall-example-10"
+source = "video/input/fall_example_10.mp4"
+source_sha256 = "13ab8261224a9a06a43de9d07b1b5d8cb43694831140f101c50cac60ac1ac4b6"
+subject = "local-subject-10"
+trial = "fall-trial-10"
+camera = "camera-1"
+split = "regression"
+duration_s = 1.9
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.375
+match_end_s = 1.9
+recovered = false
 
 [[clips]]
 id = "no-person-sample-1"
