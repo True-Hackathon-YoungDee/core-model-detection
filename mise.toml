@@ -4,6 +4,10 @@ node = "latest"
 python = "latest"
 uv = "latest"
 
+[env]
+FALL_DATA_BATCH = "evaluation/batches/urfd-github-samples.toml"
+FALL_DATA_RESULT_LOG = "results/urfd-github-samples.jsonl"
+
 [tasks.test]
 description = "Run test suite"
 run = "uv run pytest"
@@ -15,6 +19,20 @@ run = [
   "uv run fall-evaluate --manifest evaluation/manifests/local-falls.toml --strategy temporal-fsm",
   "uv run fall-evaluate --manifest evaluation/manifests/synthetic-adl.toml --strategy temporal-fsm",
 ]
+
+[tasks.batch_regression]
+description = "Run offline regressions plus a sequential labelled HTTPS video batch"
+run = '''
+if [ -z "${FALL_DATA_BATCH:-}" ]; then
+  echo "FALL_DATA_BATCH must name a labelled URL batch descriptor" >&2
+  exit 2
+fi
+mise run regression_test
+uv run fall-data run-links \
+  --batch "$FALL_DATA_BATCH" \
+  --data-root "${FALL_DATA_ROOT:-.fall-data}" \
+  --result-log "${FALL_DATA_RESULT_LOG:-results/batch-regression.jsonl}"
+'''
 
 [tasks.run]
 description = "Run fall-detection CLI (webcam by default)"

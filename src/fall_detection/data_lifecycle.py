@@ -359,15 +359,15 @@ def probe_batch(path: str | Path) -> list[dict[str, object]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Probe, download, and safely delete manifest-bound fall-video batches")
+    parser = argparse.ArgumentParser(description="Probe, download, and run fall-video batches")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("probe", "download", "delete", "run"):
+    for name in ("probe", "download", "delete", "run", "run-links"):
         command = commands.add_parser(name)
         command.add_argument("--batch", type=Path, required=True)
         command.add_argument("--data-root", type=Path, default=Path("datasets"))
         if name == "delete":
             command.add_argument("--yes", action="store_true")
-        if name == "run":
+        if name in ("run", "run-links"):
             command.add_argument("--result-log", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
@@ -377,6 +377,10 @@ def main(argv: list[str] | None = None) -> int:
             result = {"destination": str(download_batch(args.batch, args.data_root))}
         elif args.command == "delete":
             result = {"deleted": str(delete_batch(args.batch, args.data_root, yes=args.yes))}
+        elif args.command == "run-links":
+            from .link_batch import run_link_batch
+
+            return run_link_batch(args.batch, args.data_root, args.result_log)
         else:
             from .batch_processing import run_batch
 

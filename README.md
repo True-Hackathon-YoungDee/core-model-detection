@@ -264,7 +264,57 @@ are in [docs/fall-detection.md § Profiles and configuration](docs/fall-detectio
 - No `print()` anywhere in the package — every module uses
   `logger = logging.getLogger(__name__)`.
 
-## Approved video batches
+## Labelled URL batch regression
+
+For a direct list of labelled video URLs, run the complete regression gate. The
+default descriptor is [`urfd-github-samples.toml`](evaluation/batches/urfd-github-samples.toml):
+two labelled RGB examples published by the URFD evaluation mirror. The task
+keeps `mise run test` offline, runs the committed offline regressions first,
+then downloads and classifies one URL at a time.
+
+```bash
+mise run batch_regression
+```
+
+The default `FALL_DATA_BATCH` and `FALL_DATA_RESULT_LOG` are configured in
+[`mise.toml`](mise.toml). Change those values there to use another descriptor
+or output path; `FALL_DATA_ROOT` optionally selects the download directory
+(default `.fall-data`). The result log must be new or empty: without source
+checksums, appending a later run could silently mix different versions of a
+remote file. Successful inputs are deleted only after their per-clip result is
+durably written; failed inputs remain under the data root for diagnosis.
+
+The included batch is an executable two-clip sample, not the complete 70-trial
+URFD corpus. A full-corpus descriptor needs accessible direct HTTPS URLs and a
+binary label for every trial:
+
+```toml
+schema_version = 1
+dataset = "my-dataset"
+batch = "2026-08-28"
+
+[[clips]]
+id = "fall-001"
+url = "https://example.org/fall-001.mp4"
+label = "fall"
+
+[[clips]]
+id = "adl-001"
+url = "https://example.org/adl-001.mp4"
+label = "normal"
+```
+
+URLs must be HTTPS and each clip ID must be unique. Each `clip_result` JSONL
+record contains the actual/predicted labels, `TP`/`TN`/`FP`/`FN` outcome, and
+detected incidents. The final `summary` record is computed from those JSONL
+records and contains the aggregate confusion matrix plus accuracy, precision,
+recall, and F1. Download or inference failures are recorded but excluded from
+the metric denominator, and make the command exit non-zero. This is a
+clip-level metric: a clip predicts `fall` when it emits at least one detected
+incident. No source checksum is recorded or verified, so the result cannot
+prove which remote file version was evaluated.
+
+## Approved checksum-pinned video batches
 
 Use `fall-data run` for the complete manifest-bound lifecycle. It downloads
 the batch, processes each clip headlessly with the default pose and fall

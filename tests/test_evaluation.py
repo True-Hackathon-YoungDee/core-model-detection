@@ -10,6 +10,7 @@ import pytest
 
 import fall_detection.evaluation as evaluation
 from fall_detection.evaluation import (
+    binary_classification_summary,
     evaluate_manifest,
     load_manifest,
     replay_trace,
@@ -22,6 +23,23 @@ MODEL_SHA = "b" * 64
 BALANCED_CONFIG_FINGERPRINT = (
     "04b0aeafc288b37ceb47737075615882d10da6f6e6a06c3961a326ec6c177979"
 )
+
+
+def test_binary_classification_summary_reports_all_confusion_outcomes():
+    """A wrong TP/TN/FP/FN branch or metric denominator changes this report."""
+    report = binary_classification_summary(
+        [(True, True), (False, False), (False, True), (True, False)]
+    )
+
+    assert report == {
+        "clip_confusion": {"TP": 1, "TN": 1, "FP": 1, "FN": 1},
+        "classification_metrics": {
+            "accuracy": 0.5,
+            "precision": 0.5,
+            "recall": 0.5,
+            "f1_score": 0.5,
+        },
+    }
 
 
 def _features(
