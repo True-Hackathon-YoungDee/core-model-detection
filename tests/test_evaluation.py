@@ -541,6 +541,47 @@ def test_event_metrics_are_aggregated_from_executed_trace_replay(tmp_path: Path)
     }
 
 
+def test_clip_classification_counts_incidents_independently_of_event_matching(
+    tmp_path: Path,
+):
+    """A late/wrong event alert is still a positive clip prediction."""
+    trace = tmp_path / "trace.jsonl"
+    trace_sha = _write_trace(
+        trace,
+        {
+            "matched-positive": (4.0, [_observation(2.0, downward_speed=1.0)]),
+            "late-positive": (4.0, [_observation(3.5, downward_speed=1.0)]),
+            "missed-positive": (4.0, [_observation(0.0)]),
+            "false-positive": (4.0, [_observation(2.0, downward_speed=1.0)]),
+            "true-negative": (4.0, [_observation(0.0)]),
+        },
+    )
+    manifest = tmp_path / "manifest.toml"
+    manifest.write_text(
+        _manifest_text(
+            trace.name,
+            trace_sha,
+            [
+                    {"id": "matched-positive", "duration_s": 4.0, "events": [{"onset_s": 1.0, "match_end_s": 3.0}]},
+                    {"id": "late-positive", "duration_s": 4.0, "events": [{"onset_s": 1.0, "match_end_s": 3.0}]},
+                    {"id": "missed-positive", "duration_s": 4.0, "events": [{"onset_s": 1.0, "match_end_s": 3.0}]},
+                    {"id": "false-positive", "duration_s": 4.0},
+                    {"id": "true-negative", "duration_s": 4.0},
+            ],
+        )
+    )
+
+    report = evaluate_manifest(manifest, "relaxed-or", FallConfig())
+
+    assert report["clip_confusion"] == {"TP": 2, "FP": 1, "TN": 1, "FN": 1}
+    assert report["classification_metrics"] == {
+        "accuracy": 0.6,
+        "precision": pytest.approx(2 / 3),
+        "recall": pytest.approx(2 / 3),
+        "f1_score": pytest.approx(2 / 3),
+    }
+
+
 def test_same_kind_alert_after_label_match_end_is_a_miss_and_false_positive(
     tmp_path: Path,
 ):
@@ -936,20 +977,39 @@ def test_committed_local_trace_executes_falls_and_zero_event_negative_clips():
     report = evaluate_manifest(manifest, "temporal-fsm", FallConfig())
 
     assert report["event_counts"] == {
-        "labelled": 4,
-        "detected": 4,
-        "true_positive": 4,
+        "labelled": 10,
+        "detected": 8,
+        "true_positive": 8,
         "false_positive": 0,
-        "missed": 0,
+        "missed": 2,
     }
+    assert report["clip_confusion"] == {"TP": 8, "FP": 0, "TN": 2, "FN": 2}
+    assert report["classification_metrics"] == {
+        "accuracy": pytest.approx(10 / 12),
+        "precision": pytest.approx(1.0),
+        "recall": pytest.approx(0.8),
+        "f1_score": pytest.approx(8 / 9),
+    }
+    # fall-example-6 and fall-example-9 are genuine misses: both are short
+    # (~1.9s) staged-fall clips where the labelled fall never reaches
+    # FALL_CONFIRMED before the clip ends (fall-example-6 stalls in
+    # SLUMPING/IMPACT; fall-example-9's slower onset never leaves
+    # DESCENDING). Do not "fix" this test by relabelling those clips —
+    # they are real FSM misses on short clips and are tracked as such.
     expected_falls = {
         "fall-example-1": ("HIGH", 5.754, None),
         "fall-example-2": ("HIGH", 3.366, None),
         "fall-example-3": ("MEDIUM", 2.166, None),
         "fall-example-4": ("MEDIUM", 2.2, 2.933),
+        "fall-example-5": ("HIGH", 1.6, None),
+        "fall-example-7": ("HIGH", 1.766, None),
+        "fall-example-8": ("HIGH", 1.666, None),
+        "fall-example-10": ("HIGH", 1.533, None),
     }
+    expected_missed = {"fall-example-6", "fall-example-9"}
     assert {clip["clip_id"] for clip in report["clips"]} == {
         *expected_falls,
+        *expected_missed,
         "no-person-sample-1",
         "no-person-sample-2",
     }
@@ -958,6 +1018,11 @@ def test_committed_local_trace_executes_falls_and_zero_event_negative_clips():
             assert clip["incidents"] == []
             assert clip["event_results"] == []
             assert clip["false_positives"] == 0
+            continue
+        if clip["clip_id"] in expected_missed:
+            assert clip["incidents"] == []
+            assert clip["event_results"][0]["matched"] is False
+            assert clip["event_results"][0]["detected_at"] is None
             continue
         assert len(clip["incidents"]) == 1
         incident = clip["incidents"][0]

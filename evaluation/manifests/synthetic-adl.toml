@@ -1,0 +1,208 @@
+# GENERATED FILE -- do not hand-edit.
+# Produced by scripts/generate_synthetic_traces.py from
+# src/fall_detection/synthetic_traces.py. Every clip below is an
+# authored FallFeatures stream, not a recorded subject: source_sha256
+# is a placeholder digest of the scenario id, and model_sha256 in the
+# paired trace is the documented sentinel sha256("synthetic-no-model"),
+# not a real pose-model bundle. Regenerate rather than hand-edit:
+#   uv run python scripts/generate_synthetic_traces.py
+schema_version = 1
+dataset = "synthetic-adl"
+trace = "../traces/synthetic-adl-v1.jsonl"
+trace_sha256 = "0691657ee76c029f19e786bf8d27614948f1761732447c5577f6bc65a09fda35"
+
+[[clips]]
+id = "synth-fall-forward-fast"
+source = "synthetic/synth-fall-forward-fast.synthetic"
+source_sha256 = "78050283d373452f7f394b521d97653bd9cffe14e37e380cf82dd398a0e2104c"
+subject = "synthetic-subject-1"
+trial = "fall-forward-fast"
+camera = "synthetic"
+split = "regression"
+duration_s = 3.0
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.5
+match_end_s = 2.5
+recovered = false
+
+[[clips]]
+id = "synth-fall-backward-fast"
+source = "synthetic/synth-fall-backward-fast.synthetic"
+source_sha256 = "ccfd5a1423f422e6ecdcfab3c8590a2d6e531ee91b2bc8b1d7c22e2dbd05b016"
+subject = "synthetic-subject-2"
+trial = "fall-backward-fast"
+camera = "synthetic"
+split = "regression"
+duration_s = 3.25
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.8
+match_end_s = 2.8
+recovered = false
+
+[[clips]]
+id = "synth-fall-lateral-recovered"
+source = "synthetic/synth-fall-lateral-recovered.synthetic"
+source_sha256 = "da9469a8064c84403104610a6efb357ce951729481b06b125aa9da09f4504ab0"
+subject = "synthetic-subject-3"
+trial = "fall-lateral-recovered"
+camera = "synthetic"
+split = "regression"
+duration_s = 3.5
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.4
+match_end_s = 2.4
+recovered = true
+
+[[clips]]
+id = "synth-fall-slow-slump"
+source = "synthetic/synth-fall-slow-slump.synthetic"
+source_sha256 = "3622eb8fb38d02191ffe4804fe79decbf58bf45d5bbef34d54e9ce14edeaac9e"
+subject = "synthetic-subject-4"
+trial = "fall-slow-slump"
+camera = "synthetic"
+split = "regression"
+duration_s = 4.4
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.6
+match_end_s = 3.6
+recovered = false
+
+[[clips]]
+id = "synth-fall-low-visibility"
+source = "synthetic/synth-fall-low-visibility.synthetic"
+source_sha256 = "31aa37204fb27535c8255fa60b873cb96b4fb780638279086a4449ce2b0cc357"
+subject = "synthetic-subject-5"
+trial = "fall-low-visibility"
+camera = "synthetic"
+split = "regression"
+duration_s = 3.2
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 0.5
+match_end_s = 2.5
+recovered = false
+
+[[clips]]
+id = "synth-fall-after-long-quiet"
+source = "synthetic/synth-fall-after-long-quiet.synthetic"
+source_sha256 = "10ed8010339558ff8d94b7454501139dd32dba4fc04b858bd9bffe29e4bc7157"
+subject = "synthetic-subject-6"
+trial = "fall-after-long-quiet"
+camera = "synthetic"
+split = "regression"
+duration_s = 10.5
+
+[[clips.events]]
+kind = "OBSERVED_FALL"
+onset_s = 8.0
+match_end_s = 10.0
+recovered = false
+
+[[clips]]
+id = "synth-adl-fast-sit"
+source = "synthetic/synth-adl-fast-sit.synthetic"
+source_sha256 = "67fc5e0335e747650e5b52c79a2c4c69480ddae860804654586e73c2e3905ca1"
+subject = "synthetic-subject-7"
+trial = "adl-fast-sit"
+camera = "synthetic"
+split = "regression"
+duration_s = 2.9
+
+[[clips]]
+id = "synth-adl-lie-on-bed-brief"
+source = "synthetic/synth-adl-lie-on-bed-brief.synthetic"
+source_sha256 = "db4c88f1a48a4496d05faa355a082f51c8cb559d0cfcdcdb5dc5babf34b6728d"
+subject = "synthetic-subject-8"
+trial = "adl-lie-on-bed-brief"
+camera = "synthetic"
+split = "regression"
+duration_s = 3.6
+
+[[clips]]
+id = "synth-adl-bend-pick-up"
+source = "synthetic/synth-adl-bend-pick-up.synthetic"
+source_sha256 = "e0cf623c7f13cc74053180ad61a6cbb616eebeb7691f9f9b5ec48290377b35e0"
+subject = "synthetic-subject-9"
+trial = "adl-bend-pick-up"
+camera = "synthetic"
+split = "regression"
+duration_s = 2.6
+
+[[clips]]
+id = "synth-adl-squat"
+source = "synthetic/synth-adl-squat.synthetic"
+source_sha256 = "85f0e94ff31fd70298c51ad9996052ab8a96e560c90f47ffa09a408662f33df6"
+subject = "synthetic-subject-10"
+trial = "adl-squat"
+camera = "synthetic"
+split = "regression"
+duration_s = 3.8
+
+[[clips]]
+id = "synth-adl-jump"
+source = "synthetic/synth-adl-jump.synthetic"
+source_sha256 = "f567c4cec282e2e3542e3e80cc6b8959a9af6632ebd9e6bf10ea8c0109253680"
+subject = "synthetic-subject-11"
+trial = "adl-jump"
+camera = "synthetic"
+split = "regression"
+duration_s = 2.5
+
+[[clips]]
+id = "synth-adl-brisk-walk"
+source = "synthetic/synth-adl-brisk-walk.synthetic"
+source_sha256 = "24adc1cdcfb59d439cb173e54e550dbc709956fa4a812507c3ea2a97c5d98ad5"
+subject = "synthetic-subject-12"
+trial = "adl-brisk-walk"
+camera = "synthetic"
+split = "regression"
+duration_s = 3.0
+
+[[clips]]
+id = "synth-adl-sit-on-floor"
+source = "synthetic/synth-adl-sit-on-floor.synthetic"
+source_sha256 = "13f735e6b4c995462c2daed832f35002e89704188be42d6f7a6fb8e03136f350"
+subject = "synthetic-subject-13"
+trial = "adl-sit-on-floor-deliberate"
+camera = "synthetic"
+split = "regression"
+duration_s = 3.0
+
+[[clips]]
+id = "synth-adl-kneel"
+source = "synthetic/synth-adl-kneel.synthetic"
+source_sha256 = "242c1e2a442d110ec9f927f27c1e04b1124adea7ff82903206afbfc17651fd7b"
+subject = "synthetic-subject-14"
+trial = "adl-kneel"
+camera = "synthetic"
+split = "regression"
+duration_s = 2.5
+
+[[clips]]
+id = "synth-degenerate-all-invalid"
+source = "synthetic/synth-degenerate-all-invalid.synthetic"
+source_sha256 = "f90b8b829512bef77b0a05695d5890eb041a056ae28c5af2ba9fe6923ae3ce59"
+subject = "synthetic-subject-15"
+trial = "degenerate-all-invalid"
+camera = "synthetic"
+split = "regression"
+duration_s = 2.0
+
+[[clips]]
+id = "synth-degenerate-single-observation"
+source = "synthetic/synth-degenerate-single-observation.synthetic"
+source_sha256 = "29ca999be1bcc0c38d08c14e791150cceb77af12f3c397996aaa2a38ae30cfcc"
+subject = "synthetic-subject-16"
+trial = "degenerate-single-observation"
+camera = "synthetic"
+split = "regression"
+duration_s = 0.05

@@ -8,6 +8,14 @@ uv = "latest"
 description = "Run test suite"
 run = "uv run pytest"
 
+[tasks.regression_test]
+description = "Run the full test suite and both committed replay regressions"
+run = [
+  "uv run pytest -q",
+  "uv run fall-evaluate --manifest evaluation/manifests/local-falls.toml --strategy temporal-fsm",
+  "uv run fall-evaluate --manifest evaluation/manifests/synthetic-adl.toml --strategy temporal-fsm",
+]
+
 [tasks.run]
 description = "Run fall-detection CLI (webcam by default)"
 run = "uv run fall-detection --source 0"

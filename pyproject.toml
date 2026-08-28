@@ -14,6 +14,7 @@ dependencies = [
 [project.scripts]
 fall-detection = "fall_detection:main"
 fall-evaluate = "fall_detection.evaluation:main"
+fall-data = "fall_detection.data_lifecycle:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]

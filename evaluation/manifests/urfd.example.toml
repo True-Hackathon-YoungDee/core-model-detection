@@ -7,7 +7,7 @@ trace_sha256 = "0000000000000000000000000000000000000000000000000000000000000000
 
 [[clips]]
 id = "urfd-subject01-fall01-camera0"
-source = "datasets/urfd/falls/fall-01-camera0.avi"
+source = "urfd/example/falls/fall-01-camera0.avi"
 source_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 subject = "subject01"
 trial = "fall01"

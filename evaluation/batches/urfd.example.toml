@@ -1,0 +1,14 @@
+# Replace these non-routable placeholders with approved, direct RGB asset URLs.
+# This descriptor intentionally selects only the clips in urfd.example.toml.
+schema_version = 1
+dataset = "urfd"
+batch = "example"
+manifest = "../manifests/urfd.example.toml"
+storage_prefix = "urfd/example"
+
+[[clips]]
+id = "urfd-subject01-fall01-camera0"
+urls = [
+  "https://approved.example.invalid/urfd/falls/fall-01-camera0.avi",
+  "https://mirror.example.invalid/urfd/falls/fall-01-camera0.avi",
+]
