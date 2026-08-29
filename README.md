@@ -1,351 +1,342 @@
-# fall-detection
+# Fall Detection
 
-MediaPipe pose core for a fall-detection pipeline: 33 body landmarks per person,
-from a webcam or a video file, for one person or several. Fall decisions sit on
-top of this keypoint layer — pixel-corrected RGB geometry and duration-weighted
-evidence feed a deterministic temporal state machine. Everything reports
-through `logging` — the package contains no `print`.
+A Python 3.13+ fall-detection pipeline built on MediaPipe Pose and OpenCV. It
+extracts 33 body landmarks per person from webcams, recorded video, and network
+streams, then turns pixel-corrected geometry and duration-weighted evidence into
+deterministic fall incidents. It supports multi-person inference, headless
+operation, annotated video, JSONL alerts and telemetry, and replay evaluation
+without a server or database.
 
-## Quickstart
+This is an engineering and research implementation, not a medical device. Its
+thresholds and small evaluation sets do not establish clinical or production
+fitness.
 
-```bash
-uv sync                                                   # install
-uv run fall-detection --source 0                          # webcam, overlay window
-uv run fall-detection --source clip.mp4 --output out.mp4 --no-display
-uv run pytest                                              # 258 tests
-```
+## ✨ Features
 
-The first run downloads the pose model bundle into `models/` (gitignored).
-Press `q` or `Esc` to close the overlay window.
+- Webcam, network-stream, and recorded-video processing.
+- Native single-person inference or a person-detection cascade for crowds.
+- Stable identities, One-Euro smoothing, temporal evidence, and a per-person
+  finite-state machine (FSM).
+- Interactive overlays, optional evidence diagnostics, and annotated video.
+- Schema-v1 JSON Lines for incidents, telemetry, and batch results.
+- Deterministic feature-trace replay with four comparison strategies.
+- Checksum-pinned data handling and sequential direct-link batch regression.
 
-## Repository map
+## 🧭 Table of contents
 
-| Path | What lives there |
-| --- | --- |
-| `src/fall_detection/` | the package — pose detection, fall FSM, CLI (see [Layout](#layout)) |
-| `tests/` | pytest suite, TDD-developed; synthetic fixtures in `conftest.py` / `synthetic_falls.py` |
-| `docs/fall-detection.md` | fall-detection operating guide: FSM, config, telemetry, replay, limits |
-| `docs.md` | onboarding reading order / mental model for new contributors |
-| `config/` | example `--fall-config` TOML (thresholds, furniture ROIs) |
-| `evaluation/` | replay manifests (`manifests/`) and committed feature traces (`traces/`) |
-| `scripts/` | `extract_fall_traces.py` — regenerate a trace from raw video |
-| `models/` | downloaded `.task` bundles (gitignored, created on first run) |
+- [Requirements](#-requirements)
+- [Installation](#-installation)
+- [Quickstart](#-quickstart)
+- [Live and recorded inference](#-live-and-recorded-inference)
+- [Configuration](#-configuration)
+- [Runtime architecture](#-runtime-architecture)
+- [Detector strategies and benchmark](#-detector-strategies-and-benchmark)
+- [Alerts, telemetry, and output](#-alerts-telemetry-and-output)
+- [Evaluation and replay](#-evaluation-and-replay)
+- [Data lifecycle and batches](#-data-lifecycle-and-batches)
+- [Programmatic use](#-programmatic-use)
+- [Repository layout](#-repository-layout)
+- [Operational gotchas](#-operational-gotchas)
+- [Deployment](#-deployment)
+- [Security and privacy](#-security-and-privacy)
+- [Development and testing](#-development-and-testing)
+- [Contributing](#-contributing)
+- [Versioning, authorship, and license](#-versioning-authorship-and-license)
+- [Limitations](#-limitations)
+- [Further reading](#-further-reading)
 
-## How it fits together
+## 🧰 Requirements
 
-```
-cli.py:main()
-  -> PoseConfig
-  -> VideoFileRunner / LiveStreamRunner        (runner.py)
-       -> engine.py:build_engine picks:
-            NativeEngine    (pose.py)
-            CascadeEngine   (cascade.py + person_detector.py)
-       -> PosePipeline:
-            tracking.py:IdentityTracker        (stable ids across frames)
-            smoothing.py:LandmarkSmoother      (One-Euro filter)
-       -> per-frame list[PersonPose]
-       -> fall_state.py:FallStateManager       (one tracker per stable id)
-            -> fall_evidence.py:ImageEvidenceExtractor / classify_evidence
-            -> fall_fsm.py:PersonFallFSM.step()
-            -> FallEvent / FallIncident
-       -> drawing.py overlay, VideoWriter, telemetry JSONL
-```
+- Python 3.13 or newer, as declared in `pyproject.toml`.
+- [`uv`](https://docs.astral.sh/uv/) for dependency and command management.
+- An OpenCV-readable camera, video, or network stream for inference.
+- A desktop display only for the interactive window; `--no-display` is
+  headless.
 
-Two concerns are layered here and separable: **pose estimation** (getting
-landmarks reliably, one or many people) and **fall detection** (turning a
-stream of landmarks into a state-machine decision). Run pose-only with
-`--no-fall-detection`.
+MediaPipe 1.x supplies the Tasks API and pulls in
+`opencv-contrib-python` and NumPy. Development uses pytest. There is no
+frontend, server, database, container, CI/CD pipeline, formatter, linter, or
+type checker configured in this repository.
 
-## Where to start reading
+GPU delegation is optional and Linux-only. It applies to native inference; the
+parallel cascade uses CPU because delegates are bound to their creating thread.
 
-| If you want to change… | Start at |
-| --- | --- |
-| CLI flags / wiring | `cli.py` |
-| how landmarks are produced | `pose.py`, then `engine.py` |
-| multi-person recall | `cascade.py`, `person_detector.py` |
-| fall decisions | `fall_evidence.py` → `fall_fsm.py` → `fall_state.py` |
-| thresholds, without touching code | `config/fall_detection.example.toml` |
+## 📦 Installation
 
-For a fully guided, file-by-file reading order with rationale — the version of
-this section written for someone who has never opened the repo — see
-[docs.md](docs.md).
-
-## Install
+From the repository root, synchronize the locked environment:
 
 ```bash
 uv sync
 ```
 
-`mediapipe>=1.0.1` pulls `opencv-contrib-python` and `numpy`. MediaPipe 1.x ships
-the Tasks API only (`mediapipe.solutions` no longer exists), so everything uses
-`mediapipe.tasks.python.vision.PoseLandmarker`.
-
-## Run
+The first inference run downloads the selected MediaPipe Pose Landmarker
+`.task` bundle into the gitignored `models/` directory. For offline or
+controlled deployments, supply a local bundle with `--model-path`.
 
 ```bash
-# webcam, single best person, overlay window
+uv run fall-detection --help
+uv run fall-evaluate --help
+uv run fall-data --help
+```
+
+## 🚀 Quickstart
+
+```bash
+# Webcam with interactive overlay
 uv run fall-detection --source 0
 
-# webcam, up to 4 people -- picks the cascade automatically
-uv run fall-detection --source 0 --num-poses 4 --min-detection-confidence 0.6
+# Recorded video, headless, with annotated output
+uv run fall-detection --source clip.mp4 --output out.mp4 --no-display
 
-# same, near native speed: person boxes every third frame, regions carried between
+# Multi-person webcam processing
 uv run fall-detection --source 0 --num-poses 4 --detect-interval 3
 
-# recorded clip, headless, logs to a file
-uv run fall-detection --source clip.mp4 --no-display --log-file run.log
-
-# many poses tracked but only the strongest one kept downstream
-uv run fall-detection --source 0 --num-poses 4 --best-only
-
-# per-frame detail
-uv run fall-detection --source clip.mp4 --log-level DEBUG
+# Incident alerts and detailed decision telemetry
+uv run fall-detection \
+  --source clip.mp4 \
+  --no-display \
+  --fall-alert-log results/alerts.jsonl \
+  --fall-telemetry-log results/telemetry.jsonl
 ```
 
-Press `q` or `Esc` to quit the window. The first run downloads the model bundle
-into `models/` (gitignored).
+Press `q` or `Esc` to close the window. Exit codes are `0` for success,
+`1` for runtime failure, and `2` for invalid arguments.
 
-### Flags
+## 🎥 Live and recorded inference
 
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--source` | `0` | camera index, `/dev/video*`, a video file path, or a stream URL (`rtsp://...`, or DroidCam/IP Webcam `http://<phone-ip>:4747/mjpegfeed`) |
-| `--model` | `full` | `lite` / `full` / `heavy` bundle |
-| `--model-path` | – | use a local `.task` file instead of downloading |
-| `--cache-dir` | `models/` | where downloaded bundles live |
-| `--num-poses` | `1` | maximum people tracked |
-| `--best-only` | off | keep only the highest-scoring person |
-| `--gpu` | off | try the GPU delegate (Linux; falls back to CPU) |
-| `--no-display` | off | headless, no cv2 window |
-| `--display-max-width` | `1280` | cap initial display window width in px, preserves aspect ratio |
-| `--no-smoothing` | off | disable One-Euro landmark filtering |
-| `--min-detection-confidence` / `--min-presence-confidence` / `--tracking-confidence` | `0.5` | BlazePose thresholds |
-| `--max-frames` | – | stop after N frames (testing aid) |
-| `--detector` | `auto` | `auto` / `native` / `cascade` (see below) |
-| `--person-model` | `efficientdet_lite0` | cascade person-box model |
-| `--person-score` | `0.4` | person box confidence floor |
-| `--crop-padding` | `0.15` | grow each box so limbs are not clipped |
-| `--crop-workers` | `min(4, --num-poses)` | landmarkers running crops in parallel |
-| `--detect-interval` | `1` | run the person detector every Nth frame |
-| `--min-box-px` | `48` | ignore person boxes smaller than this |
-| `--log-level` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
-| `--log-file` | – | mirror logs to a file |
-| `--output` | – | write annotated frames to this video file (e.g. `out.mp4`); file sources only, rejected for live sources |
-| `--no-fall-detection` | off | pose-only, skip the fall-state layer |
-| `--body-mass-kg` | – | deprecated compatibility flag; has no effect on RGB fall decisions |
-| `--fall-config` | – | validated TOML threshold/ROI configuration |
-| `--fall-profile` | `balanced` | `sensitive` / `balanced` / `precision`; overrides the TOML profile |
-| `--fall-alert-log` | – | append schema-v1 detected/recovered incident JSONL |
-| `--fall-telemetry-log` | – | append schema-v1 per-decision feature/evidence telemetry JSONL |
-| `--fall-debug-overlay` | off | show evidence duration/fraction/coverage and observation age |
+`fall-detection` accepts a camera index, `/dev/video*` device, file path,
+or stream URL through `--source`.
 
-Exit codes: `0` success, `1` runtime failure, `2` bad arguments.
-
-Network sources (`rtsp://`, `http://`) get low-latency FFmpeg flags by default
-(`rtsp_transport;tcp|fflags;nobuffer|max_delay;0`) and `CAP_PROP_BUFFERSIZE=1`,
-so a stalled phone stream drops old frames instead of piling up lag. OpenCV's
-native logger stays silent unless `--log-level DEBUG`, which also turns it
-verbose for diagnosing handshake stalls. Override the FFmpeg options (e.g. to
-try `udp` transport, or add a `stimeout` for a flaky Wi-Fi link) by setting
-`OPENCV_FFMPEG_CAPTURE_OPTIONS` yourself before running — the default only
-applies via `setdefault`, so it never overrides an explicit value.
-
-## Choosing a strategy
-
-`--detector auto` (the default) runs **native** at `--num-poses 1` and the
-**cascade** above it. Force either with `--detector native|cascade`.
-
-**Native** hands the whole frame to one landmarker. BlazePose proposes a single
-dominant region per frame, so extra people are silently dropped — the landmarks
-never arrive and nothing warns you.
-
-**Cascade** runs `efficientdet_lite0` over the frame, keeps the `person` class,
-pads each box, letterboxes it to a square, and gives each one its own
-single-person landmarker. Crops run in parallel across `--crop-workers`.
-
-### Measured here
-
-120 frames, 1280x720, three bodies standing apart, `full` model, CPU, 16 cores:
-
-| run | fps | frames with all 3 people |
-| --- | --- | --- |
-| `--detector native` | 17.2 | 63 / 120 |
-| `--detector cascade` | 13.9 | **120 / 120** |
-| `--detector cascade --crop-workers 1` | 8.2 | 120 / 120 |
-| `--detector cascade --detect-interval 3` | **17.7** | **120 / 120** |
-| `--detector cascade --model lite --detect-interval 3` | 17.0 | 120 / 120 |
-
-One batch, same machine and clip; fps wanders about a point run to run, the
-recall column does not. Native also reported a fourth, non-existent person on 3
-of those frames.
-With `--detect-interval 3` the cascade costs nothing against native here and
-still finds everybody, so that is the setting to reach for on a busy scene.
-
-Single still frames, same bodies at several spacings: native returned 1 pose
-where the cascade returned 3 or 4. The gap widens as people get closer.
-
-### Choices behind the numbers
-
-- **`efficientdet_lite0` int8 over `lite2` float16.** Probed side by side, the
-  smaller bundle recalled people the larger one missed entirely.
-- **Crops are letterboxed, not stretched or widened.** The landmarker squares its
-  input, so a tall box gets squashed. Padding lifted torso confidence from 0.91 to
-  0.99 on edge-clipped bodies; widening the box with real pixels dragged in the
-  neighbour and scored worse.
-- **`z` is rescaled with the crop.** It shares `x`'s scale, so a crop-local `z`
-  copied straight out reads far too deep. `world_landmarks` are left alone —
-  metric and hip-centred, they are already correct per crop.
-- **The cascade stays on CPU.** GPU delegates are bound to their creating thread
-  and crops are inferred in parallel; `--gpu --detector cascade` warns and uses
-  CPU. `--detector native --gpu` does use the GPU.
-
-## Layout
-
-| Module | Role |
-| --- | --- |
-| `pose.py` | `PoseConfig`, `PersonPose`, `PoseDetector` — the core wrapper |
-| `engine.py` | `NativeEngine` / `CascadeEngine` behind one `infer()` |
-| `person_detector.py` | `PersonBox`, `PersonDetector` — the cascade's first stage |
-| `cascade.py` | crops, letterboxing, parallel landmarking, coordinate remap |
-| `strategy.py` | `Strategy` enum, importable without mediapipe |
-| `models.py` | bundle URL resolution, atomic download, caching |
-| `runner.py` | `VideoFileRunner` (VIDEO) and `LiveStreamRunner` (LIVE_STREAM) |
-| `tracking.py` | `IdentityTracker` — stable ids across frames |
-| `smoothing.py` | One-Euro filter for landmark jitter |
-| `drawing.py` | skeleton / bbox / HUD overlay |
-| `fall_config.py` | validated profiles, overrides, and furniture ROI polygons |
-| `fall_evidence.py` | finite pixel geometry and temporal RGB derivatives |
-| `fall_fsm.py` | temporal state transitions and alert evidence levels |
-| `fall_state.py` | per-person extractors plus durable incident history |
-| `fall_telemetry.py` | schema-v1 telemetry and incident JSONL records |
-| `evaluation.py` | manifest validation, four replay strategies, event metrics |
-| `logging_config.py` | `setup_logging`, rate limiting, native-log quieting |
-| `cli.py` | argument parsing and wiring |
-| `geometry.py` | pure-numpy 2D convex hull / point-to-polygon distance |
-| `biomechanics.py` | De Leva center-of-mass, postural instability index *(offline)* |
-| `discriminators.py` | physics-based ADL (activities-of-daily-living) discriminators *(offline)* |
-| `kalman.py` | extended Kalman filter landmark stabilizer, occlusion-tolerant *(offline)* |
-
-`geometry.py`, `biomechanics.py`, `discriminators.py`, and `kalman.py` are
-unit-tested (`test_geometry.py`, `test_biomechanics.py`, `test_discriminators.py`,
-`test_kalman.py`) but marked *(offline)* because nothing in
-`cli.py → runner.py → fall_state.py → fall_fsm.py → fall_evidence.py` calls into
-them — treat them as a physics reference / future-use layer, not active code.
-`geometry.py` is the one exception reached at runtime: `biomechanics.py` imports
-its convex-hull helpers.
-
-## Configuration
-
-`--fall-config` takes a TOML file of thresholds and furniture ROIs;
-[`config/fall_detection.example.toml`](config/fall_detection.example.toml) is the
-annotated starting point — copy it and edit. `profile` selects one of
-`sensitive` / `balanced` / `precision` as a baseline (`--fall-profile` overrides
-it from the CLI without editing the file). Full semantics of every threshold
-group (`[dynamic]`, `[posture]`, `[timing]`, `[quality]`, `[[furniture_rois]]`)
-are in [docs/fall-detection.md § Profiles and configuration](docs/fall-detection.md#profiles-and-configuration).
-
-## Testing and development
-
-- Package manager is **uv**: `uv sync` to install, `uv run <cmd>` to run
-  anything.
-- `uv run pytest` runs the suite (258 tests, scoped to `tests/` via
-  `pyproject.toml`).
-- This is TDD-developed code: write the failing test first, watch it fail,
-  then implement.
-- `tests/` intentionally has no `__init__.py`, so pytest's prepend import mode
-  puts `tests/` on `sys.path`. Import shared fixtures with a **bare**
-  `from conftest import make_person, standing_pose`, not
-  `from tests.conftest import ...`. Don't add `tests/__init__.py`.
-- Shared synthetic `PersonPose` fixtures: `tests/conftest.py` (basic builders)
-  and `tests/synthetic_falls.py` (full keyframed standing→lying sequence for
-  FSM/orchestrator tests).
-- No lint, format, or type-check tooling is configured (no ruff/black/mypy/
-  pre-commit), and no CI exists yet — don't invent commands for either.
-- No `print()` anywhere in the package — every module uses
-  `logger = logging.getLogger(__name__)`.
-
-## Labelled URL batch regression
-
-For a direct list of labelled video URLs, run the complete regression gate. The
-default descriptor is [`urfd-github-samples.toml`](evaluation/batches/urfd-github-samples.toml):
-two labelled RGB examples published by the URFD evaluation mirror. The task
-keeps `mise run test` offline, runs the committed offline regressions first,
-then downloads and classifies one URL at a time.
+### Webcam, video, and pose-only mode
 
 ```bash
-mise run batch_regression
+uv run fall-detection --source 0
+uv run fall-detection --source /dev/video0
+uv run fall-detection --source clip.mp4 --max-frames 300
+uv run fall-detection --source clip.mp4 --no-fall-detection
 ```
 
-The default `FALL_DATA_BATCH` and `FALL_DATA_RESULT_LOG` are configured in
-[`mise.toml`](mise.toml). Change those values there to use another descriptor
-or output path; `FALL_DATA_ROOT` optionally selects the download directory
-(default `.fall-data`). The result log must be new or empty: without source
-checksums, appending a later run could silently mix different versions of a
-remote file. Successful inputs are deleted only after their per-clip result is
-durably written; failed inputs remain under the data root for diagnosis.
+### Network streams
 
-The included batch is an executable two-clip sample, not the complete 70-trial
-URFD corpus. A full-corpus descriptor needs accessible direct HTTPS URLs and a
-binary label for every trial:
+```bash
+uv run fall-detection --source rtsp://camera.example/live
+uv run fall-detection --source http://192.0.2.10:4747/mjpegfeed
+```
+
+Network sources receive low-latency FFmpeg defaults
+(`rtsp_transport;tcp|fflags;nobuffer|max_delay;0`) and
+`CAP_PROP_BUFFERSIZE=1`. They use `setdefault`, so operators can override
+them:
+
+```bash
+OPENCV_FFMPEG_CAPTURE_OPTIONS='rtsp_transport;udp|stimeout;5000000' \
+  uv run fall-detection --source rtsp://camera.example/live
+```
+
+OpenCV native logging stays quiet unless `--log-level DEBUG` is selected,
+which helps diagnose stream handshakes and decoder failures.
+
+### Multi-person cascade
+
+```bash
+# Auto selects cascade because num-poses is greater than one
+uv run fall-detection \
+  --source 0 \
+  --num-poses 4 \
+  --min-detection-confidence 0.6
+
+# Carry detected regions between every-third-frame detector passes
+uv run fall-detection --source 0 --num-poses 4 --detect-interval 3
+
+# Track several poses but keep only the strongest downstream
+uv run fall-detection --source 0 --num-poses 4 --best-only
+```
+
+### Headless output, logs, and debug overlay
+
+```bash
+uv run fall-detection \
+  --source clip.mp4 \
+  --output results/annotated.mp4 \
+  --no-display \
+  --log-level INFO \
+  --log-file results/run.log
+
+uv run fall-detection --source clip.mp4 --fall-debug-overlay --log-level DEBUG
+```
+
+`--output` supports file sources only and is rejected for cameras and network
+streams. Annotation occurs only when display or output is enabled. The debug
+overlay adds evidence duration/fraction/coverage and observation age.
+
+### Option reference
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `--source` | `0` | Camera, device, video path, HTTP(S), or RTSP source. |
+| `--model` | `full` | Use `lite`, `full`, or `heavy`. |
+| `--model-path` | none | Use a local `.task` bundle. |
+| `--cache-dir` | `models` | Downloaded model cache. |
+| `--num-poses` | `1` | Maximum people to track. |
+| `--best-only` | off | Keep only the most confident person. |
+| `--gpu` | off | Try the Linux GPU delegate. |
+| `--detector` | `auto` | Use `auto`, `native`, or `cascade`. |
+| `--person-model` | `efficientdet_lite0` | Cascade box model; `lite0` or `lite2`. |
+| `--person-score` | `0.4` | Person-box confidence floor. |
+| `--crop-padding` | `0.15` | Padding around each person box. |
+| `--crop-workers` | `min(4, --num-poses)` | Parallel crop landmarkers. |
+| `--detect-interval` | `1` | Detect every Nth frame and carry regions. |
+| `--min-box-px` | `48` | Minimum box short side. |
+| `--no-fall-detection` | off | Run pose estimation without fall decisions. |
+| `--body-mass-kg` | none | Deprecated; no effect on RGB decisions. |
+| `--fall-config` | none | Load validated TOML thresholds and ROIs. |
+| `--fall-profile` | `balanced` | `sensitive`, `balanced`, or `precision`. |
+| `--fall-alert-log` | none | Append incident JSONL. |
+| `--fall-telemetry-log` | none | Append decision telemetry JSONL. |
+| `--fall-debug-overlay` | off | Display evidence timing and coverage. |
+| `--output` | none | Write annotated video for a file source. |
+| `--no-display` | off | Disable the OpenCV window. |
+| `--display-max-width` | `1280` | Cap display width, preserving aspect. |
+| `--no-smoothing` | off | Disable One-Euro filtering. |
+| `--min-detection-confidence` | `0.5` | BlazePose detection threshold. |
+| `--min-presence-confidence` | `0.5` | BlazePose presence threshold. |
+| `--tracking-confidence` | `0.5` | BlazePose tracking threshold. |
+| `--max-frames` | none | Stop after N frames. |
+| `--log-level` | `INFO` | `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |
+| `--log-file` | none | Mirror logs to a file. |
+
+## ⚙️ Configuration
+
+Copy the annotated example and edit it:
+
+```bash
+cp config/fall_detection.example.toml config/local-fall.toml
+uv run fall-detection --source 0 --fall-config config/local-fall.toml
+```
+
+Configuration precedence is:
+
+1. Explicit `--fall-profile`.
+2. The TOML document's `profile`.
+3. `balanced`.
+4. Explicit TOML fields override the selected profile seed.
+
+Profiles are `sensitive`, `balanced`, and `precision`. TOML supports
+`[dynamic]`, `[posture]`, `[timing]`, `[quality]`, and optional
+`[[furniture_rois]]` sections. Unknown keys, non-finite values, invalid
+ranges, and non-positive durations fail validation.
 
 ```toml
-schema_version = 1
-dataset = "my-dataset"
-batch = "2026-08-28"
-
-[[clips]]
-id = "fall-001"
-url = "https://example.org/fall-001.mp4"
-label = "fall"
-
-[[clips]]
-id = "adl-001"
-url = "https://example.org/adl-001.mp4"
-label = "normal"
+[[furniture_rois]]
+name = "bed"
+points = [[0.10, 0.25], [0.90, 0.25], [0.90, 0.95], [0.10, 0.95]]
 ```
 
-URLs must be HTTPS and each clip ID must be unique. Each `clip_result` JSONL
-record contains the actual/predicted labels, `TP`/`TN`/`FP`/`FN` outcome, and
-detected incidents. The final `summary` record is computed from those JSONL
-records and contains the aggregate confusion matrix plus accuracy, precision,
-recall, and F1. Download or inference failures are recorded but excluded from
-the metric denominator, and make the command exit non-zero. This is a
-clip-level metric: a clip predicts `fall` when it emits at least one detected
-incident. No source checksum is recorded or verified, so the result cannot
-prove which remote file version was evaluated.
+Without a furniture ROI, the system never claims `BED_REST`. See the
+[example configuration](config/fall_detection.example.toml) and
+[configuration guide](docs/fall-detection.md#profiles-and-configuration).
 
-## Approved checksum-pinned video batches
+## 🏗️ Runtime architecture
 
-Use `fall-data run` for the complete manifest-bound lifecycle. It downloads
-the batch, processes each clip headlessly with the default pose and fall
-configuration, writes durable incident summaries, then removes only inputs
-whose successful classification was recorded.
+```text
+fall-detection CLI
+    |
+    +-- source + PoseConfig
+    |
+    +-- VideoFileRunner / LiveStreamRunner
+          |
+          +-- build_engine
+          |     +-- NativeEngine: whole-frame Pose Landmarker
+          |     `-- CascadeEngine: person boxes -> crops -> landmarkers
+          |
+          +-- IdentityTracker -> LandmarkSmoother -> list[PersonPose]
+          |
+          +-- frame-processing application layer
+          |     `-- FallStateManager: one PersonFallFSM per identity
+          |           `-- pixel features -> evidence -> temporal state
+          |
+          `-- overlays + annotated video + alert/telemetry JSONL
+
+feature traces     -> fall-evaluate -> deterministic event metrics
+batch descriptors -> fall-data     -> download/classify/cleanup JSONL
+```
+
+The engine produces `PersonPose` values with 33 normalized landmarks, metric
+hip-centred world landmarks, a score, bounding box, and centroid. The identity
+tracker uses nearest-centroid association, and One-Euro smoothing reduces
+jitter unless disabled.
+
+For each identity, `ImageEvidenceExtractor` derives finite pixel-space torso
+angle, aspect ratio, downward speed, rotation, height collapse, motion,
+visibility, and centroid features. `classify_evidence` creates explicit
+evidence gates. `PersonFallFSM` latches them over time, weighting observation
+duration and coverage. A terminal confirmation creates one durable incident;
+recovery updates it without retracting the alert. See the
+[FSM transition guide](docs/fall-detection.md#states-transitions-and-incidents).
+
+## 📊 Detector strategies and benchmark
+
+`--detector auto` uses native inference for `--num-poses 1` and cascade
+above one. Force either with `--detector native|cascade`.
+
+**Native** sends the whole frame to one landmarker. BlazePose tends to propose
+one dominant region, so other people may never produce landmarks.
+
+**Cascade** detects person boxes, pads and letterboxes each crop, and sends each
+to an independent single-person landmarker. Crops run across
+`--crop-workers`.
+
+The repository benchmark used 120 frames at 1280×720, three separated bodies,
+the `full` model, CPU, and 16 cores:
+
+| Run | FPS | Frames with all 3 people |
+| --- | ---: | ---: |
+| `--detector native` | 17.2 | 63 / 120 |
+| `--detector cascade` | 13.9 | 120 / 120 |
+| `--detector cascade --crop-workers 1` | 8.2 | 120 / 120 |
+| `--detector cascade --detect-interval 3` | 17.7 | 120 / 120 |
+| `--detector cascade --model lite --detect-interval 3` | 17.0 | 120 / 120 |
+
+These are measurements from one machine and clip, not performance guarantees.
+FPS varied roughly one point; recall did not. Native also reported a fourth,
+nonexistent person on three frames. Still-image probes returned one native
+pose where cascade returned three or four.
+
+Design choices behind the result:
+
+- `efficientdet_lite0` int8 recalled people that `lite2` float16 missed.
+- Crops are padded and letterboxed, not stretched; this protects limbs without
+  pulling neighbours into the crop.
+- Crop-local `z` is rescaled with normalized `x`; metric, hip-centred
+  `world_landmarks` remain unchanged.
+- Cascade stays on CPU due to parallel, thread-bound landmarkers. Native can
+  use `--gpu`.
+
+## 🚨 Alerts, telemetry, and output
 
 ```bash
-uv run fall-data run \
-  --batch evaluation/batches/urfd.example.toml \
-  --result-log results/urfd-run.jsonl \
-  --data-root datasets
+uv run fall-detection \
+  --source clip.mp4 \
+  --output results/annotated.mp4 \
+  --no-display \
+  --fall-alert-log results/incidents.jsonl \
+  --fall-telemetry-log results/decisions.jsonl
 ```
 
-`--result-log` is required and must be outside the batch directory. Both
-stdout and the append-only result log use schema-v1 JSON Lines. Stdout emits
-`download`, `classify`, `delete`, and `complete` progress events with
-`completed`, `total`, and `percent`; the result log additionally records the
-descriptor and manifest fingerprints, checksums, frame counts, elapsed time,
-and detected/recovered incidents. Re-running the same command resumes from
-the durable records: it does not classify a successful clip again, and retries
-only a failed cleanup after re-verifying its checksum.
+`--fall-alert-log` writes compact schema-v1 `detected` and `recovered`
+records containing incident ID, original/current person IDs, state, timestamp,
+kind, evidence level, `detected_at`, and `recovered_at`.
 
-## Replay regression
+`--fall-telemetry-log` writes one schema-v1 record per person and processing
+step: raw features, evidence gates, prior/current state, duration-weighted
+evidence and coverage, observation age, and incident data. JSONL is append-only,
+so long-running deployments need log rotation. Annotated video contains
+skeletons, boxes, IDs, state HUD, and optional debug evidence.
 
-The repository commits numerical feature traces, checksums, and labels—not
-videos or model bundles. There are two committed replay sets, and they mean
-different things — don't conflate them.
+## 🧪 Evaluation and replay
 
-**`local-falls`** — real MediaPipe traces extracted from real video (12
-clips: 10 labelled falls, 2 person-present negatives). This is the one
-accuracy claim in this repo that reflects real-world behavior.
+`fall-evaluate` replays finite feature traces without MediaPipe, source video,
+or a model bundle:
 
 ```bash
 uv run fall-evaluate \
@@ -353,8 +344,42 @@ uv run fall-evaluate \
   --strategy temporal-fsm
 ```
 
-To regenerate the trace from a checkout where raw assets live outside an
-isolated worktree:
+| Strategy | Decision model |
+| --- | --- |
+| `legacy-and` | All five dynamic/posture votes plus stillness on one sample. |
+| `relaxed-or` | Any dynamic/posture vote on one sample. |
+| `k-of-n` | At least three of five votes on one sample. |
+| `temporal-fsm` | Production latching, duration, gap, level, and recovery. |
+
+Use `--split NAME` for a manifest with multiple frozen splits.
+`--fall-config` and `--fall-profile` follow production precedence. Replay
+rejects a configuration fingerprint different from extraction.
+
+Reports contain event counts, sensitivity, precision, false alerts per hour,
+miss rate, matched latency, recovery timing, and state dwell. Matching is
+event-level and deterministic. `fall-evaluate` prints JSON and exits zero
+regardless of its metrics; pytest supplies the pass/fail regression gates.
+
+### Committed replay sets
+
+**`local-falls`** contains real MediaPipe traces from 10 labelled falls and 2
+person-present negatives. Balanced replay detects 8 falls; two short clips are
+committed misses. This small staged set guards behavior, not real-world
+accuracy.
+
+**`synthetic-adl`** contains 16 authored `FallFeatures` streams: six fall
+geometries, eight ADL hard negatives, and two degenerate inputs. Its metrics
+describe authored scenarios and are not measured system accuracy.
+
+```bash
+uv run fall-evaluate \
+  --manifest evaluation/manifests/synthetic-adl.toml \
+  --strategy temporal-fsm
+
+uv run python scripts/generate_synthetic_traces.py
+```
+
+Regenerate real-video traces when raw assets live outside the checkout:
 
 ```bash
 uv run python scripts/extract_fall_traces.py \
@@ -365,102 +390,269 @@ uv run python scripts/extract_fall_traces.py \
   --fall-profile balanced --force
 ```
 
-Extraction records the pose-model SHA-256 and a canonical fingerprint of the
-exact fall configuration, including furniture ROIs. Replay must use that same
-configuration; a profile, threshold, or ROI mismatch requires re-extraction.
+Extraction verifies source SHA-256 and records model checksum plus a canonical
+configuration fingerprint. The repository commits traces, checksums, and
+labels—not videos or model bundles. Public-dataset templates under
+`evaluation/manifests/` require lawful local assets and real checksums.
 
-**`synthetic-adl`** — hand-authored `FallFeatures` streams (6 fall
-geometries, 8 ADL hard negatives — fast sit, brief lie-down, bend, squat,
-kneel, jump, brisk walk, deliberate floor-sit — and 2 degenerate inputs).
-These are **not recordings of a real subject**; they exist to pressure-test
-the FSM against motions the small `local-falls` negative set doesn't cover,
-and to pin exact per-clip behavior so a threshold change in `fall_fsm.py` /
-`fall_evidence.py` can't silently flip clips in opposite directions and
-still pass an aggregate metric. Its recall/precision/F1 describe how the
-FSM responds to these authored inputs, not measured system accuracy — never
-quote them as the latter.
+## 🗄️ Data lifecycle and batches
 
-```bash
-uv run fall-evaluate \
-  --manifest evaluation/manifests/synthetic-adl.toml \
-  --strategy temporal-fsm
-```
+`fall-data` exposes five subcommands:
 
-Regenerate deterministically (no video, no model bundle needed) from the
-scenario catalog in `src/fall_detection/synthetic_traces.py`:
+| Subcommand | Required options | Behavior |
+| --- | --- | --- |
+| `probe` | `--batch` | Probe mirrors and report status, latency, type, and selection. |
+| `download` | `--batch` | Atomically download and checksum-verify a pinned batch. |
+| `delete` | `--batch --yes` | Delete only a verified complete batch. |
+| `run` | `--batch --result-log` | Run a resumable checksum-pinned batch. |
+| `run-links` | `--batch --result-log` | Run binary-labelled direct HTTPS links. |
+
+All accept `--data-root`, defaulting to `datasets`.
+
+### Probe, download, and delete
 
 ```bash
-uv run python scripts/generate_synthetic_traces.py
+uv run fall-data probe \
+  --batch evaluation/batches/urfd.example.toml --data-root datasets
+
+uv run fall-data download \
+  --batch evaluation/batches/urfd.example.toml --data-root datasets
+
+uv run fall-data delete \
+  --batch evaluation/batches/urfd.example.toml --data-root datasets --yes
 ```
 
-Both regressions are gated by pytest (`tests/test_evaluation.py`,
-`tests/test_synthetic_regression.py`), not by `fall-evaluate` itself —
-`fall-evaluate` prints a JSON report and exits 0 regardless of the numbers
-inside it; it is not a pass/fail gate on its own. `mise run regression_test`
-runs the test suite and replays both manifests in sequence.
+Downloads stage before an atomic move, verify each manifest SHA-256, and write
+a receipt tied to descriptor and manifest. Deletion requires `--yes`, path
+containment, a matching receipt, and matching checksums.
 
-## Notes that bite
+### Run a checksum-pinned batch
 
-- **MediaPipe world landmarks are y-down, not y-up.** `world_landmarks`
-  (metric, hip-centered) are **not** flipped to a standard "y-up" convention —
-  `y` increases **downward**, same as normalized image landmarks. So
-  "vertical"/"up" in any physics code is the `-y` direction, and the ground
-  plane is `(x, z)`. Verified against a real MediaPipe inference and documented
-  in both `src/fall_detection/biomechanics.py:8-11` and `tests/conftest.py:3-6`.
-  Standard 3D-graphics/physics axis intuition is backwards here — don't assume it.
-- **Timestamps must strictly increase.** VIDEO derives them from the file fps;
-  LIVE_STREAM uses `time.monotonic_ns()` rebased to stream start, never the wall
-  clock. `PoseDetector` bumps a non-increasing timestamp and warns instead of
-  letting the C++ layer throw.
-- **Results always arrive off the capture thread.** Native uses MediaPipe's
-  dispatcher thread; the cascade gets its own worker, which also builds its
-  landmarkers there so no delegate is ever touched from a foreign thread. Both
-  stamp a heartbeat and push into a `queue.Queue(maxsize=2)`, dropping the stale
-  result when full. Drawing and I/O happen on the main thread.
-- **Native C++ logs are muted around model creation only.** MediaPipe writes
-  those straight to file descriptor 2, before glog starts, so `GLOG_minloglevel`
-  never sees them; `suppress_native_stderr()` redirects the fd instead, and steps
-  aside at `--log-level DEBUG`. One benign line still escapes on first inference
-  (`landmark_projection_calculator ... square ROI`) — the cascade's crops *are*
-  square, so it is describing the supported case.
-- **`--detect-interval > 1` carries regions forward.** Between detector runs the
-  previous frame's pose boxes are reused. The carry is abandoned the moment it
-  holds fewer regions than the detector last found, so someone walking into frame
-  is not hidden until the next scheduled run.
-- **No re-identification.** MediaPipe can swap the order of `pose_landmarks`
-  between frames, so ids come from `IdentityTracker` (greedy nearest-centroid).
-- **Live runs self-heal.** If no result arrives within the stall timeout, or the
-  camera dies, the landmarker and capture are closed and rebuilt with exponential
-  backoff, giving up after 5 consecutive failures.
+```bash
+uv run fall-data run \
+  --batch evaluation/batches/urfd.example.toml \
+  --result-log results/urfd-run.jsonl \
+  --data-root datasets
+```
 
-## Programmatic use
+The log must be outside the removable batch directory. Stdout and the
+append-only log use schema-v1 JSONL with fingerprints, checksums, frame counts,
+elapsed time, incidents, and progress. Re-running resumes successful records,
+never reclassifies them, and retries failed cleanup after checksum validation.
+
+### Run a direct-link batch
+
+```bash
+uv run fall-data run-links \
+  --batch evaluation/batches/urfd-github-samples.toml \
+  --data-root .fall-data \
+  --result-log results/urfd-github-samples.jsonl
+```
+
+Direct-link descriptors require unique IDs, HTTPS URLs, and `fall` or
+`normal` labels. They have no source checksums, so the log must be new or
+empty and cannot prove remote file identity. A successful input is deleted
+only after its result is flushed and synced. Failures remain for diagnosis,
+cause a nonzero exit, and are excluded from metric denominators. The summary
+reports TP/TN/FP/FN, accuracy, precision, recall, and F1.
+
+```bash
+mise run batch_regression
+```
+
+This convenience task runs pytest and both committed replays before the
+direct-link sample. Defaults are in [mise.toml](mise.toml). The included
+two-clip URFD batch is a sample, not the full 70-trial corpus.
+
+## 🐍 Programmatic use
 
 ```python
+from fall_detection.engine import build_engine
 from fall_detection.logging_config import setup_logging
 from fall_detection.models import ModelVariant
 from fall_detection.pose import PoseConfig, RunningMode, best_person
-from fall_detection.engine import build_engine
 
 setup_logging("INFO")
-config = PoseConfig(model_variant=ModelVariant.FULL, num_poses=4)   # -> cascade
+config = PoseConfig(model_variant=ModelVariant.FULL, num_poses=4)
 engine = build_engine(config, RunningMode.IMAGE)
+
 try:
     persons = engine.infer(bgr_frame, timestamp_ms=0)
-    subject = best_person(persons)          # highest torso visibility
+    subject = best_person(persons)
 finally:
     engine.close()
 ```
 
-`build_engine` honours `config.strategy`; `PoseDetector` is still there if you
-want the raw single-landmarker path.
+`build_engine` honors `config.strategy`; `num_poses=4` with `AUTO`
+selects cascade. Use `PoseDetector` for the raw single-landmarker path.
 
-Each `PersonPose` carries `landmarks` (33 normalized), `world_landmarks` (metric),
-`score`, `bbox` and `centroid` — the inputs a fall heuristic needs.
+## 🗂️ Repository layout
 
-## Further reading
-
-| Topic | Doc |
+| Path | Responsibility |
 | --- | --- |
-| Guided, file-by-file onboarding reading order | [docs.md](docs.md) |
-| Fall-detection FSM, config profiles, telemetry, replay evaluation, limits | [docs/fall-detection.md](docs/fall-detection.md) |
-| Dev/agent conventions and repo-specific gotchas | [CLAUDE.md](CLAUDE.md) |
+| `src/fall_detection/pose.py` | Pose configuration, values, and MediaPipe wrapper. |
+| `src/fall_detection/engine.py` | Unified native/cascade engines. |
+| `src/fall_detection/person_detector.py` | Cascade person boxes. |
+| `src/fall_detection/cascade.py` | Crops, parallel inference, coordinate remap. |
+| `src/fall_detection/runner.py` | Video and self-healing live runners. |
+| `src/fall_detection/tracking.py` | Stable nearest-centroid identities. |
+| `src/fall_detection/smoothing.py` | One-Euro landmark filtering. |
+| `src/fall_detection/application/` | Frame and fall-event orchestration. |
+| `src/fall_detection/domain/` | Adapter-independent domain events. |
+| `src/fall_detection/adapters/` | Event-sink adapter boundary. |
+| `src/fall_detection/fall_config.py` | Profiles, overrides, and ROIs. |
+| `src/fall_detection/fall_evidence.py` | Pixel features and evidence. |
+| `src/fall_detection/fall_fsm.py` | Temporal state transitions. |
+| `src/fall_detection/fall_state.py` | Tracker and incident ownership. |
+| `src/fall_detection/fall_telemetry.py` | Incident/telemetry JSONL. |
+| `src/fall_detection/drawing.py` | Skeleton, box, HUD, and debug overlays. |
+| `src/fall_detection/evaluation.py` | Replay and event metrics. |
+| `src/fall_detection/data_lifecycle.py` | Pinned data CLI and cleanup. |
+| `src/fall_detection/batch_processing.py` | Resumable pinned batches. |
+| `src/fall_detection/link_batch.py` | Direct-link batches. |
+| `src/fall_detection/models.py` | Atomic model download and cache. |
+| `src/fall_detection/logging_config.py` | Logging and native suppression. |
+| `src/fall_detection/geometry.py` | Convex hull and polygon geometry. |
+| `src/fall_detection/biomechanics.py` | Offline biomechanics utilities. |
+| `src/fall_detection/discriminators.py` | Offline ADL discriminators. |
+| `src/fall_detection/kalman.py` | Offline Kalman stabilization. |
+| `config/` | Annotated TOML configuration. |
+| `evaluation/` | Batches, manifests, and traces. |
+| `scripts/` | Trace generation. |
+| `tests/` | pytest suite. |
+
+Biomechanics, discriminators, and Kalman utilities are tested but not on the
+active CLI decision path. See [docs.md](docs.md) for a reading order.
+
+## ⚠️ Operational gotchas
+
+- **World-landmark `y` points down.** World landmarks are metric and
+  hip-centred but downward-positive. Up is `-y`; ground is `(x, z)`.
+- **World coordinates do not locate a person in the room.** The hip origin is
+  reset per pose, so runtime descent uses pixel-corrected image geometry.
+- **Timestamps strictly increase.** Video uses FPS; live mode uses rebased
+  `time.monotonic_ns()`. Invalid timestamps are bumped with a warning.
+- **Results arrive off the capture thread.** A queue of size two drops stale
+  results; drawing and I/O stay on the main thread.
+- **Tracking is not re-identification.** Greedy centroid IDs can change after
+  occlusion, disappearance, or crossings.
+- **`--detect-interval` carries regions.** Prior boxes are reused between
+  detector passes; incomplete carry is abandoned.
+- **Live runs self-heal.** Stalls rebuild capture and inference with
+  exponential backoff, ending after five consecutive failures.
+- **Native logs bypass Python logging at startup.** File descriptor 2 is
+  suppressed around model creation unless DEBUG is active; one benign
+  square-ROI message may still appear.
+- **Package code uses logging.** Command JSON is deliberately written to
+  stdout; package modules contain no `print()`.
+
+## 🌐 Deployment
+
+This repository ships a local process, not a hosted service. A minimal
+deployment needs Python 3.13+, a synchronized `uv` environment, a pinned
+model via `--model-path`, a readable source, writable outputs, and optionally
+a process supervisor.
+
+For unattended use, select `--no-display`, explicit log paths, log rotation,
+and OS-level exit-code/disk monitoring. Validate camera permissions and codecs,
+then benchmark the chosen model and detector settings on target hardware.
+
+No Dockerfile, Compose file, web API, database migration, deployment manifest,
+or CI/CD configuration is provided.
+
+## 🔒 Security and privacy
+
+- Restrict access and retention for frames, annotated video, incident times,
+  telemetry, and backups.
+- Telemetry exposes movement, identity continuity, timestamps, and configured
+  location names even without video.
+- Stream credentials in URLs may appear in process listings or logs; prefer
+  protected configuration and isolated camera networks.
+- Review every batch descriptor. Pinned batches verify SHA-256; direct links
+  enforce HTTPS but cannot prove content identity.
+- Conservative pinned deletion requires `--yes`, containment, receipt, and
+  checksum checks. Direct-link cleanup removes only a durably classified input.
+- Verify external models and follow dataset licensing and consent requirements.
+
+There is no authentication layer because no server is exposed. Apply access
+control at the operating-system and deployment boundaries.
+
+## 🛠️ Development and testing
+
+```bash
+uv sync
+uv run pytest
+```
+
+pytest is scoped to `tests/`. Test counts are omitted because they evolve.
+There is no configured formatter, linter, type checker, pre-commit hook, or CI.
+
+- Use TDD for behavior changes: observe a focused failure, implement, then run
+  the focused and relevant suite.
+- `tests/` intentionally lacks `__init__.py`; use bare
+  `from conftest import ...` imports.
+- Builders live in `tests/conftest.py`; fall sequences live in
+  `tests/synthetic_falls.py`.
+- Keep MediaPipe imports lazy at the package entry point so native log quieting
+  happens before initialization.
+
+```bash
+mise run regression_test
+mise run batch_regression
+```
+
+## 🤝 Contributing
+
+There is no formal `CONTRIBUTING.md`. Until one exists:
+
+1. Describe behavior, data assumptions, and acceptance criteria before a large
+   change.
+2. Preserve the boundaries between pose inference, fall decisions, evaluation,
+   and data lifecycle.
+3. Add focused pytest coverage and preserve deterministic traces unless
+   intentionally recalibrating them.
+4. Document CLI, TOML, JSONL, or replay-semantic changes.
+5. Never commit subject video, models, secrets, camera URLs, or runtime logs.
+
+## 🏷️ Versioning, authorship, and license
+
+The package version is `0.1.0`. There is no release automation or published
+compatibility policy, so consumers should pin the revision they validate.
+Treat CLI, configuration, trace, and JSONL changes as compatibility-sensitive.
+
+`pyproject.toml` names **parinya-ao** as author. Contributions and research
+foundations are acknowledged through Git history and the upstream projects
+cited below.
+
+There is currently no committed license file. Do not assume MIT or another
+license; obtain permission from the copyright holder before copying,
+redistributing, or deploying beyond what applicable law permits.
+
+## 🚧 Limitations
+
+- Not clinically validated; never use as the sole emergency or safety monitor.
+- RGB inference is sensitive to occlusion, light, angle, clothing, blur,
+  subject size, and stream quality.
+- Native multi-pose inference can miss people; cascade costs more compute.
+- Identity tracking is short-term association, not biometric identification.
+- Furniture classification uses manual 2D ROIs; no depth, force, or physical
+  contact is measured. `IMPACT` names image evidence, not impact force.
+- Small real and synthetic replay sets are regression evidence, not
+  population-level accuracy.
+- Direct-link batches cannot prove which remote file version was evaluated.
+- Offline physics utilities do not affect production CLI decisions.
+
+## 📚 Further reading
+
+| Topic | Resource |
+| --- | --- |
+| Guided codebase reading order | [docs.md](docs.md) |
+| FSM, configuration, telemetry, replay, and safeguards | [docs/fall-detection.md](docs/fall-detection.md) |
+| Annotated TOML template | [config/fall_detection.example.toml](config/fall_detection.example.toml) |
+| Repository conventions | [CLAUDE.md](CLAUDE.md) |
+| MediaPipe Pose Landmarker | [Google AI Edge documentation](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker/python) |
+| OpenCV video I/O | [OpenCV documentation](https://docs.opencv.org/4.x/d8/dfe/classcv_1_1VideoCapture.html) |
+
+This project builds on MediaPipe, OpenCV, NumPy, pytest, `uv`, and the public
+fall-detection research datasets represented by the example manifests. Review
+all upstream and dataset terms before use.
