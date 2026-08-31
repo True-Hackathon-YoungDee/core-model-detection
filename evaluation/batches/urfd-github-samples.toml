@@ -1,0 +1,15 @@
+# Two labelled RGB examples published by the URFD evaluation mirror.
+# These are executable smoke/regression samples, not the complete 70-trial URFD corpus.
+schema_version = 1
+dataset = "urfd"
+batch = "github-samples"
+
+[[clips]]
+id = "urfd-github-fall"
+url = "https://raw.githubusercontent.com/EltonCCL/Fall-Detection/main/fall.gif"
+label = "fall"
+
+[[clips]]
+id = "urfd-github-normal"
+url = "https://raw.githubusercontent.com/EltonCCL/Fall-Detection/main/normal.gif"
+label = "normal"

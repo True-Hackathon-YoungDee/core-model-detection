@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from fall_detection import data_lifecycle
+from fall_detection import data_lifecycle, link_batch
 
 
 def _manifest(root: Path, *, checksum: str) -> Path:
@@ -189,6 +189,26 @@ def test_committed_dataset_batch_templates_link_their_manifests():
 
     for name in ("urfd.example.toml", "up-fall.example.toml"):
         assert data_lifecycle.load_batch(batches / name).clips
+
+
+def test_cli_run_links_delegates_to_the_labelled_url_batch(tmp_path: Path, monkeypatch):
+    """Removing this dispatch would make the documented batch command unusable."""
+    calls: list[tuple[Path, Path, Path]] = []
+
+    def run(batch, data_root, result_log):
+        calls.append((batch, data_root, result_log))
+        return 0
+
+    monkeypatch.setattr(link_batch, "run_link_batch", run)
+    batch = tmp_path / "links.toml"
+    root = tmp_path / "data"
+    log = tmp_path / "result.jsonl"
+
+    assert data_lifecycle.main([
+        "run-links", "--batch", str(batch), "--data-root", str(root),
+        "--result-log", str(log),
+    ]) == 0
+    assert calls == [(batch, root, log)]
 
 
 def test_delete_requires_matching_receipt_and_stays_in_data_root(tmp_path: Path, monkeypatch):

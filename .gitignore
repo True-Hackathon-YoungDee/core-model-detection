@@ -20,6 +20,8 @@ models/
 # Raw labelled/probe videos stay local; commit only manifests and numeric traces.
 /video/input/
 /datasets/
+/.fall-data/
+/results/
 
 # Interrupted extractor writes are disposable; completed JSONL traces are tracked.
 /evaluation/traces/*.tmp

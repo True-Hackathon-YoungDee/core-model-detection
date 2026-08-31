@@ -1,4 +1,13 @@
-# Learning this codebase
+# Fall Detection Engine
+
+> **"Most AI fall detectors show pretty boxes on stage. This system saves lives in production when the network fails, frames drop, and black-box models hallucinate."**
+
+[![Python 3.13+](https://img.shields.io/badge/Python-3.13+-3776AB?style=for-the-badge&logo=python&logoColor=white)](#)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-red.svg?style=for-the-badge)](#)
+[![Architecture: Clean/Hexagonal](https://img.shields.io/badge/Architecture-Partial_Hexagonal-blueviolet?style=for-the-badge)](#)
+[![Clinical Grade: FSM Deterministic](https://img.shields.io/badge/Logic-Deterministic_FSM-success?style=for-the-badge)](#)
+
+## Learning this codebase
 
 Onboarding guide for a new contributor. Not a reference doc — those exist
 already:
@@ -132,9 +141,9 @@ Two more concrete ones, since they're easy to trip on:
 
 ## Where to go deeper
 
-| Topic | Doc |
-| --- | --- |
-| Install, run, CLI flags, strategy benchmarks, module layout | [README.md](README.md) |
-| Fall-detection FSM, config profiles, telemetry, replay evaluation | [docs/fall-detection.md](docs/fall-detection.md) |
-| Dev/agent conventions | [CLAUDE.md](CLAUDE.md) |
-| Regression replay tooling | `src/fall_detection/evaluation.py`, `evaluation/manifests/` |
+| Topic                                                             | Doc                                                         |
+| ----------------------------------------------------------------- | ----------------------------------------------------------- |
+| Install, run, CLI flags, strategy benchmarks, module layout       | [README.md](README.md)                                      |
+| Fall-detection FSM, config profiles, telemetry, replay evaluation | [docs/fall-detection.md](docs/fall-detection.md)            |
+| Dev/agent conventions                                             | [CLAUDE.md](CLAUDE.md)                                      |
+| Regression replay tooling                                         | `src/fall_detection/evaluation.py`, `evaluation/manifests/` |

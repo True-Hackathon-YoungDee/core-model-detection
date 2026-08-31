@@ -15,7 +15,7 @@ import tomllib
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from .fall_config import FallConfig, load_fall_config
 from .fall_evidence import FallEvidence, FallFeatures, classify_evidence
@@ -851,6 +851,35 @@ def _ratio(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
 
 
+def binary_classification_summary(
+    classifications: Iterable[tuple[bool, bool]],
+) -> dict[str, dict[str, int] | dict[str, float]]:
+    """Aggregate clip-level ground-truth/prediction pairs into standard metrics."""
+    counts = {"TP": 0, "TN": 0, "FP": 0, "FN": 0}
+    for actual_positive, predicted_positive in classifications:
+        if actual_positive and predicted_positive:
+            counts["TP"] += 1
+        elif predicted_positive:
+            counts["FP"] += 1
+        elif actual_positive:
+            counts["FN"] += 1
+        else:
+            counts["TN"] += 1
+    total = sum(counts.values())
+    return {
+        "clip_confusion": counts,
+        "classification_metrics": {
+            "accuracy": _ratio(counts["TP"] + counts["TN"], total),
+            "precision": _ratio(counts["TP"], counts["TP"] + counts["FP"]),
+            "recall": _ratio(counts["TP"], counts["TP"] + counts["FN"]),
+            "f1_score": _ratio(
+                2 * counts["TP"],
+                2 * counts["TP"] + counts["FP"] + counts["FN"],
+            ),
+        },
+    }
+
+
 def _maximum_cardinality_event_matches(
     events: tuple[LabelledEvent, ...],
     incidents: list[Mapping[str, object]],
@@ -946,10 +975,7 @@ def evaluate_manifest(
     true_positive = 0
     false_positive = 0
     missed = 0
-    clip_true_positive = 0
-    clip_false_positive = 0
-    clip_true_negative = 0
-    clip_false_negative = 0
+    clip_classifications: list[tuple[bool, bool]] = []
     alert_latencies: list[float] = []
     recovery_times: list[float] = []
     event_results: list[dict[str, object]] = []
@@ -969,14 +995,7 @@ def evaluate_manifest(
         incidents = list(replay_clip["incidents"])  # type: ignore[arg-type]
         actual_positive = bool(manifest_clip.events)
         predicted_positive = bool(incidents)
-        if actual_positive and predicted_positive:
-            clip_true_positive += 1
-        elif predicted_positive:
-            clip_false_positive += 1
-        elif actual_positive:
-            clip_false_negative += 1
-        else:
-            clip_true_negative += 1
+        clip_classifications.append((actual_positive, predicted_positive))
         detected_count += len(incidents)
         matches = _maximum_cardinality_event_matches(manifest_clip.events, incidents)
         used_incidents = set(matches.values())
@@ -1045,12 +1064,7 @@ def evaluate_manifest(
         )
 
     total_hours = sum(clip.duration_s for clip in selected_clips) / 3600.0
-    clip_total = (
-        clip_true_positive
-        + clip_false_positive
-        + clip_true_negative
-        + clip_false_negative
-    )
+    classification_summary = binary_classification_summary(clip_classifications)
     metrics = {
         "event_sensitivity": _ratio(true_positive, labelled_count),
         "precision": _ratio(true_positive, detected_count),
@@ -1082,25 +1096,7 @@ def evaluate_manifest(
             "false_positive": false_positive,
             "missed": missed,
         },
-        "clip_confusion": {
-            "TP": clip_true_positive,
-            "FP": clip_false_positive,
-            "TN": clip_true_negative,
-            "FN": clip_false_negative,
-        },
-        "classification_metrics": {
-            "accuracy": _ratio(clip_true_positive + clip_true_negative, clip_total),
-            "precision": _ratio(
-                clip_true_positive, clip_true_positive + clip_false_positive
-            ),
-            "recall": _ratio(
-                clip_true_positive, clip_true_positive + clip_false_negative
-            ),
-            "f1_score": _ratio(
-                2 * clip_true_positive,
-                2 * clip_true_positive + clip_false_positive + clip_false_negative,
-            ),
-        },
+        **classification_summary,
         "metrics": metrics,
         "events": event_results,
         "clips": per_clip,
